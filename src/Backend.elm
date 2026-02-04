@@ -1,8 +1,8 @@
 module Backend exposing (..)
 
 import Dict exposing (Dict)
-import Env
 import Lamdera exposing (ClientId, SessionId, sendToFrontend)
+import Set exposing (Set)
 import Time
 import Types exposing (..)
 
@@ -24,6 +24,7 @@ init : ( Model, Cmd BackendMsg )
 init =
     ( { rooms = Dict.empty
       , clientToRoom = Dict.empty
+      , statsViewers = Set.empty
       }
     , Cmd.none
     )
@@ -46,15 +47,21 @@ update msg model =
             ( model, Cmd.none )
 
         ClientDisconnected _ clientId ->
+            -- Remove from stats viewers
+            let
+                modelWithoutStatsViewer =
+                    { model | statsViewers = Set.remove clientId model.statsViewers }
+            in
             -- Mark participant as disconnected and check if room should be cleaned up
-            case Dict.get clientId model.clientToRoom of
+            case Dict.get clientId modelWithoutStatsViewer.clientToRoom of
                 Nothing ->
-                    ( model, Cmd.none )
+                    -- Client wasn't in a room, nothing else to do
+                    ( modelWithoutStatsViewer, Cmd.none )
 
                 Just roomId ->
                     let
                         newModel =
-                            { model | clientToRoom = Dict.remove clientId model.clientToRoom }
+                            { modelWithoutStatsViewer | clientToRoom = Dict.remove clientId modelWithoutStatsViewer.clientToRoom }
 
                         updatedRooms =
                             Dict.update roomId
@@ -67,19 +74,23 @@ update msg model =
                         -- Check if room should be removed (no connected participants)
                         ( cleanedModel, roomClosed ) =
                             cleanupRoomIfEmpty roomId finalModel
+
+                        -- Broadcast stats update to stats viewers
+                        statsCmds =
+                            broadcastStatsUpdate cleanedModel
                     in
                     if roomClosed then
                         -- Notify remaining clients that room is closed
-                        ( cleanedModel, Cmd.none )
+                        ( cleanedModel, statsCmds )
 
                     else
                         -- Broadcast updated room state to remaining participants
                         case Dict.get roomId cleanedModel.rooms of
                             Just room ->
-                                ( cleanedModel, broadcastRoomUpdate room cleanedModel )
+                                ( cleanedModel, Cmd.batch [ broadcastRoomUpdate room cleanedModel, statsCmds ] )
 
                             Nothing ->
-                                ( cleanedModel, Cmd.none )
+                                ( cleanedModel, statsCmds )
 
         PingTick ->
             -- Increment missed pongs for all participants and check for timeouts
@@ -93,7 +104,7 @@ update msg model =
                 -- Remove timed out users from clientToRoom
                 updatedClientToRoom =
                     List.foldl
-                        (\( clientId, _ ) acc -> Dict.remove clientId acc)
+                        (\( cId, _ ) acc -> Dict.remove cId acc)
                         model.clientToRoom
                         timedOutUsers
 
@@ -107,8 +118,16 @@ update msg model =
                 pingCmds =
                     Dict.keys model.clientToRoom
                         |> List.map (\cId -> sendToFrontend cId Ping)
+
+                -- Broadcast stats update if anyone timed out
+                statsCmds =
+                    if List.isEmpty timedOutUsers then
+                        []
+
+                    else
+                        [ broadcastStatsUpdate newModel ]
             in
-            ( newModel, Cmd.batch (cmds ++ pingCmds) )
+            ( newModel, Cmd.batch (cmds ++ pingCmds ++ statsCmds) )
 
         NoOpBackendMsg ->
             ( model, Cmd.none )
@@ -147,7 +166,10 @@ updateFromFrontend sessionId clientId msg model =
                     }
             in
             ( newModel
-            , sendToFrontend clientId (RoomCreated room clientId)
+            , Cmd.batch
+                [ sendToFrontend clientId (RoomCreated room clientId)
+                , broadcastStatsUpdate newModel
+                ]
             )
 
         JoinRoom roomId pin userName ->
@@ -181,6 +203,7 @@ updateFromFrontend sessionId clientId msg model =
                         , Cmd.batch
                             [ sendToFrontend clientId (RoomJoined updatedRoom clientId)
                             , broadcastRoomUpdate updatedRoom newModel
+                            , broadcastStatsUpdate newModel
                             ]
                         )
 
@@ -243,51 +266,26 @@ updateFromFrontend sessionId clientId msg model =
 
                         ( cleanedModel, _ ) =
                             cleanupRoomIfEmpty roomId newModel
+
+                        statsCmds =
+                            broadcastStatsUpdate cleanedModel
                     in
                     case Dict.get roomId cleanedModel.rooms of
                         Just room ->
-                            ( cleanedModel, broadcastRoomUpdate room cleanedModel )
+                            ( cleanedModel, Cmd.batch [ broadcastRoomUpdate room cleanedModel, statsCmds ] )
 
                         Nothing ->
-                            ( cleanedModel, Cmd.none )
+                            ( cleanedModel, statsCmds )
 
-        RequestAdminData ->
-            case Env.mode of
-                Env.Development ->
-                    let
-                        stats =
-                            { totalRooms = Dict.size model.rooms
-                            , totalConnectedClients = Dict.size model.clientToRoom
-                            , rooms =
-                                Dict.values model.rooms
-                                    |> List.map
-                                        (\room ->
-                                            { id = room.id
-                                            , name = room.name
-                                            , pin = room.pin
-                                            , participantCount = Dict.size room.participants
-                                            , connectedCount =
-                                                Dict.filter (\_ p -> p.isConnected) room.participants
-                                                    |> Dict.size
-                                            , participants =
-                                                Dict.values room.participants
-                                                    |> List.map
-                                                        (\p ->
-                                                            { name = p.name
-                                                            , isConnected = p.isConnected
-                                                            , missedPongs = p.missedPongs
-                                                            , hasVoted = p.vote /= Nothing
-                                                            }
-                                                        )
-                                            , votesRevealed = room.votesRevealed
-                                            }
-                                        )
-                            }
-                    in
-                    ( model, sendToFrontend clientId (AdminData stats) )
+        SubscribeToStats ->
+            let
+                newModel =
+                    { model | statsViewers = Set.insert clientId model.statsViewers }
+            in
+            ( newModel, sendToFrontend clientId (StatsData (buildStats newModel)) )
 
-                Env.Production ->
-                    ( model, Cmd.none )
+        UnsubscribeFromStats ->
+            ( { model | statsViewers = Set.remove clientId model.statsViewers }, Cmd.none )
 
         Pong ->
             -- Reset missed pongs counter for this client
@@ -349,7 +347,12 @@ updateRoomForClient clientId model updateFn =
                         newModel =
                             { model | rooms = Dict.insert roomId updatedRoom model.rooms }
                     in
-                    ( newModel, broadcastRoomUpdate updatedRoom newModel )
+                    ( newModel
+                    , Cmd.batch
+                        [ broadcastRoomUpdate updatedRoom newModel
+                        , broadcastStatsUpdate newModel
+                        ]
+                    )
 
 
 {-| Broadcast room update to all participants in the room
@@ -542,3 +545,52 @@ processRoomPing model roomId room ( accRooms, accTimedOut, accCmds ) =
     , accTimedOut ++ newTimedOut
     , accCmds ++ notifyCmds ++ broadcastCmds
     )
+
+
+
+-- =============================================================================
+-- Stats Helpers
+-- =============================================================================
+
+
+buildStats : Model -> Stats
+buildStats model =
+    { totalRooms = Dict.size model.rooms
+    , totalConnectedClients = Dict.size model.clientToRoom
+    , rooms =
+        Dict.values model.rooms
+            |> List.map
+                (\room ->
+                    { name = room.name
+                    , participantCount = Dict.size room.participants
+                    , connectedCount =
+                        Dict.filter (\_ p -> p.isConnected) room.participants
+                            |> Dict.size
+                    , participants =
+                        Dict.values room.participants
+                            |> List.map
+                                (\p ->
+                                    { isConnected = p.isConnected
+                                    , missedPongs = p.missedPongs
+                                    , hasVoted = p.vote /= Nothing
+                                    }
+                                )
+                    , votesRevealed = room.votesRevealed
+                    }
+                )
+    }
+
+
+broadcastStatsUpdate : Model -> Cmd BackendMsg
+broadcastStatsUpdate model =
+    if Set.isEmpty model.statsViewers then
+        Cmd.none
+
+    else
+        let
+            stats =
+                buildStats model
+        in
+        Set.toList model.statsViewers
+            |> List.map (\cId -> sendToFrontend cId (StatsData stats))
+            |> Cmd.batch

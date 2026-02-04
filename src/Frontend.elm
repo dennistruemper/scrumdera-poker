@@ -3,7 +3,6 @@ module Frontend exposing (..)
 import Browser exposing (UrlRequest(..))
 import Browser.Navigation as Nav
 import Dict
-import Env
 import Html exposing (..)
 import Html.Attributes as Attr
 import Html.Events exposing (onClick, onInput)
@@ -87,11 +86,11 @@ init url key =
       , showShareLink = False
       , baseUrl = baseUrl
       , notifications = []
-      , adminStats = Nothing
+      , stats = Nothing
       }
     , case page of
-        AdminPage ->
-            Lamdera.sendToBackend RequestAdminData
+        StatsPage ->
+            Lamdera.sendToBackend SubscribeToStats
 
         _ ->
             Cmd.none
@@ -115,7 +114,7 @@ routeParser =
     Parser.oneOf
         [ Parser.map HomePage Parser.top
         , Parser.map (\rid pin -> RoomPage rid pin) (Parser.s "room" </> Parser.string <?> Query.string "pin")
-        , Parser.map AdminPage (Parser.s "admin")
+        , Parser.map StatsPage (Parser.s "stats")
         ]
 
 
@@ -138,18 +137,28 @@ update msg model =
 
         UrlChanged url ->
             let
-                page =
+                newPage =
                     parseUrl url
 
-                cmd =
-                    case page of
-                        AdminPage ->
-                            Lamdera.sendToBackend RequestAdminData
+                -- Unsubscribe from stats if leaving stats page
+                unsubscribeCmd =
+                    if model.page == StatsPage && newPage /= StatsPage then
+                        Lamdera.sendToBackend UnsubscribeFromStats
 
-                        _ ->
-                            Cmd.none
+                    else
+                        Cmd.none
+
+                -- Subscribe to stats if entering stats page
+                subscribeCmd =
+                    if newPage == StatsPage then
+                        Lamdera.sendToBackend SubscribeToStats
+
+                    else
+                        Cmd.none
             in
-            ( { model | page = page, error = Nothing }, cmd )
+            ( { model | page = newPage, error = Nothing }
+            , Cmd.batch [ unsubscribeCmd, subscribeCmd ]
+            )
 
         SetUserName name ->
             ( { model | userName = name }, Cmd.none )
@@ -225,8 +234,8 @@ update msg model =
         ClearClipboardFeedback ->
             ( { model | clipboardFeedback = Nothing }, Cmd.none )
 
-        RefreshAdminData ->
-            ( model, Lamdera.sendToBackend RequestAdminData )
+        RefreshStats ->
+            ( model, Lamdera.sendToBackend SubscribeToStats )
 
         NoOpFrontendMsg ->
             ( model, Cmd.none )
@@ -276,8 +285,8 @@ updateFromBackend msg model =
         ErrorMessage err ->
             ( { model | error = Just err }, Cmd.none )
 
-        AdminData stats ->
-            ( { model | adminStats = Just stats }, Cmd.none )
+        StatsData stats ->
+            ( { model | stats = Just stats }, Cmd.none )
 
         Ping ->
             -- Respond with Pong and decrement notification counters
@@ -322,8 +331,8 @@ view model =
             RoomPage roomId maybePin ->
                 viewRoomPage model roomId maybePin
 
-            AdminPage ->
-                viewAdminPage model
+            StatsPage ->
+                viewStatsPage model
         ]
     }
 
@@ -401,16 +410,11 @@ viewHomePage model =
                 [ text "Join Room" ]
             ]
 
-        -- Admin link (dev only)
-        , case Env.mode of
-            Env.Development ->
-                div [ Attr.class "mt-8 text-center" ]
-                    [ a [ Attr.href "/admin", Attr.class "text-muted text-small" ]
-                        [ text "Admin Status" ]
-                    ]
-
-            Env.Production ->
-                text ""
+        -- Stats link
+        , div [ Attr.class "mt-8 text-center" ]
+            [ a [ Attr.href "/stats", Attr.class "text-muted text-small" ]
+                [ text "Live Stats" ]
+            ]
         ]
 
 
@@ -748,73 +752,60 @@ viewResults room =
         ]
 
 
-viewAdminPage : Model -> Html FrontendMsg
-viewAdminPage model =
-    case Env.mode of
-        Env.Production ->
-            div [ Attr.class "container text-center" ]
-                [ p [ Attr.class "text-muted" ] [ text "Not available in production" ] ]
-
-        Env.Development ->
-            div [ Attr.class "container admin-container" ]
-                [ div [ Attr.class "admin-header" ]
-                    [ h1 [] [ text "Admin Status" ]
-                    , div [ Attr.class "admin-actions" ]
-                        [ button
-                            [ Attr.class "btn btn-primary btn-small"
-                            , onClick RefreshAdminData
-                            ]
-                            [ text "Refresh" ]
-                        , a [ Attr.href "/", Attr.class "btn btn-secondary btn-small" ]
-                            [ text "← Home" ]
-                        ]
-                    ]
-                , case model.adminStats of
-                    Nothing ->
-                        div [ Attr.class "text-center text-muted" ]
-                            [ text "Loading..." ]
-
-                    Just stats ->
-                        div []
-                            [ -- Stats overview
-                              div [ Attr.class "admin-stats" ]
-                                [ div [ Attr.class "stat-card" ]
-                                    [ div [ Attr.class "stat-value" ] [ text (String.fromInt stats.totalRooms) ]
-                                    , div [ Attr.class "stat-label" ] [ text "Active Rooms" ]
-                                    ]
-                                , div [ Attr.class "stat-card" ]
-                                    [ div [ Attr.class "stat-value" ] [ text (String.fromInt stats.totalConnectedClients) ]
-                                    , div [ Attr.class "stat-label" ] [ text "Connected Clients" ]
-                                    ]
-                                ]
-
-                            -- Rooms list
-                            , if List.isEmpty stats.rooms then
-                                div [ Attr.class "card text-center text-muted" ]
-                                    [ text "No active rooms" ]
-
-                              else
-                                div []
-                                    (List.map viewAdminRoom stats.rooms)
-                            ]
+viewStatsPage : Model -> Html FrontendMsg
+viewStatsPage model =
+    div [ Attr.class "container stats-container" ]
+        [ div [ Attr.class "stats-header" ]
+            [ h1 [] [ text "Live Stats" ]
+            , div [ Attr.class "stats-actions" ]
+                [ a [ Attr.href "/", Attr.class "btn btn-secondary btn-small" ]
+                    [ text "← Home" ]
                 ]
+            ]
+        , case model.stats of
+            Nothing ->
+                div [ Attr.class "text-center text-muted" ]
+                    [ text "Loading..." ]
+
+            Just stats ->
+                div []
+                    [ -- Stats overview
+                      div [ Attr.class "stats-overview" ]
+                        [ div [ Attr.class "stat-card" ]
+                            [ div [ Attr.class "stat-value" ] [ text (String.fromInt stats.totalRooms) ]
+                            , div [ Attr.class "stat-label" ] [ text "Active Rooms" ]
+                            ]
+                        , div [ Attr.class "stat-card" ]
+                            [ div [ Attr.class "stat-value" ] [ text (String.fromInt stats.totalConnectedClients) ]
+                            , div [ Attr.class "stat-label" ] [ text "Connected Users" ]
+                            ]
+                        ]
+
+                    -- Rooms list
+                    , if List.isEmpty stats.rooms then
+                        div [ Attr.class "card text-center text-muted" ]
+                            [ text "No active rooms" ]
+
+                      else
+                        div []
+                            (List.map viewStatsRoom stats.rooms)
+                    ]
+        ]
 
 
-viewAdminRoom : RoomSummary -> Html FrontendMsg
-viewAdminRoom room =
-    div [ Attr.class "admin-room card" ]
-        [ div [ Attr.class "admin-room-header" ]
+viewStatsRoom : RoomSummary -> Html FrontendMsg
+viewStatsRoom room =
+    div [ Attr.class "stats-room card" ]
+        [ div [ Attr.class "stats-room-header" ]
             [ h3 [] [ text room.name ]
-            , div [ Attr.class "admin-room-meta" ]
-                [ span [ Attr.class "admin-badge" ] [ text ("ID: " ++ room.id) ]
-                , span [ Attr.class "admin-badge" ] [ text ("PIN: " ++ room.pin) ]
-                , span
+            , div [ Attr.class "stats-room-meta" ]
+                [ span
                     [ Attr.class
                         (if room.votesRevealed then
-                            "admin-badge badge-revealed"
+                            "stats-badge badge-revealed"
 
                          else
-                            "admin-badge"
+                            "stats-badge"
                         )
                     ]
                     [ text
@@ -827,28 +818,28 @@ viewAdminRoom room =
                     ]
                 ]
             ]
-        , div [ Attr.class "admin-participants" ]
+        , div [ Attr.class "stats-participants" ]
             [ h4 []
                 [ text
-                    ("Participants ("
+                    ("Users: "
                         ++ String.fromInt room.connectedCount
                         ++ "/"
                         ++ String.fromInt room.participantCount
-                        ++ " connected)"
+                        ++ " connected"
                     )
                 ]
             , if List.isEmpty room.participants then
-                p [ Attr.class "text-muted" ] [ text "No participants" ]
+                p [ Attr.class "text-muted" ] [ text "No users" ]
 
               else
-                ul [ Attr.class "admin-participant-list" ]
-                    (List.map viewAdminParticipant room.participants)
+                ul [ Attr.class "stats-participant-list" ]
+                    (List.indexedMap viewStatsParticipant room.participants)
             ]
         ]
 
 
-viewAdminParticipant : ParticipantSummary -> Html FrontendMsg
-viewAdminParticipant participant =
+viewStatsParticipant : Int -> ParticipantSummary -> Html FrontendMsg
+viewStatsParticipant index participant =
     let
         connectionClass =
             if not participant.isConnected then
@@ -860,23 +851,16 @@ viewAdminParticipant participant =
             else
                 "connected"
     in
-    li [ Attr.class "admin-participant-item" ]
+    li [ Attr.class "stats-participant-item" ]
         [ span [ Attr.class ("status-dot " ++ connectionClass) ] []
-        , span [ Attr.class "admin-participant-name" ] [ text participant.name ]
-        , span [ Attr.class "admin-participant-status" ]
-            [ if participant.missedPongs >= 2 then
-                text ("⚠️ " ++ String.fromInt participant.missedPongs ++ " missed")
-
-              else
-                text ""
-            ]
+        , span [ Attr.class "stats-participant-name" ] [ text ("User " ++ String.fromInt (index + 1)) ]
         , span
             [ Attr.class
                 (if participant.hasVoted then
-                    "admin-vote-status voted"
+                    "stats-vote-status voted"
 
                  else
-                    "admin-vote-status"
+                    "stats-vote-status"
                 )
             ]
             [ text

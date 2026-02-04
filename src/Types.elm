@@ -4,6 +4,7 @@ import Browser exposing (UrlRequest)
 import Browser.Navigation exposing (Key)
 import Dict exposing (Dict)
 import Lamdera exposing (ClientId)
+import Set exposing (Set)
 import Url exposing (Url)
 
 
@@ -58,10 +59,10 @@ type alias Notification =
 type Page
     = HomePage
     | RoomPage RoomId (Maybe Pin)
-    | AdminPage
+    | StatsPage
 
 
-type alias AdminStats =
+type alias Stats =
     { totalRooms : Int
     , totalConnectedClients : Int
     , rooms : List RoomSummary
@@ -69,9 +70,7 @@ type alias AdminStats =
 
 
 type alias RoomSummary =
-    { id : RoomId
-    , name : String
-    , pin : Pin
+    { name : String
     , participantCount : Int
     , connectedCount : Int
     , participants : List ParticipantSummary
@@ -80,8 +79,7 @@ type alias RoomSummary =
 
 
 type alias ParticipantSummary =
-    { name : String
-    , isConnected : Bool
+    { isConnected : Bool
     , missedPongs : Int
     , hasVoted : Bool
     }
@@ -106,7 +104,7 @@ type alias FrontendModel =
     , showShareLink : Bool
     , baseUrl : String
     , notifications : List Notification
-    , adminStats : Maybe AdminStats
+    , stats : Maybe Stats
     }
 
 
@@ -118,6 +116,7 @@ type alias FrontendModel =
 type alias BackendModel =
     { rooms : Dict RoomId Room
     , clientToRoom : Dict ClientId RoomId
+    , statsViewers : Set ClientId
     }
 
 
@@ -143,7 +142,7 @@ type FrontendMsg
     | ToggleShareLink
     | ClipboardResult { success : Bool, message : String }
     | ClearClipboardFeedback
-    | RefreshAdminData
+    | RefreshStats
     | NoOpFrontendMsg
 
 
@@ -160,7 +159,8 @@ type ToBackend
     | RevealVotes
     | ResetVotes
     | LeaveRoom
-    | RequestAdminData
+    | SubscribeToStats
+    | UnsubscribeFromStats
     | Pong -- Response to ping
 
 
@@ -189,6 +189,6 @@ type ToFrontend
     | InvalidPin
     | RoomClosed
     | ErrorMessage String
-    | AdminData AdminStats
+    | StatsData Stats
     | Ping -- Heartbeat from server
     | UserTimedOut String -- userName who timed out

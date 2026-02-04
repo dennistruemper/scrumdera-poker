@@ -387,14 +387,6 @@ a:hover {
 .mt-4 { margin-top: 1rem; }
 .mt-8 { margin-top: 2rem; }
 
-/* Admin page */
-.admin-stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 1rem;
-    margin-bottom: 2rem;
-}
-
 .stat-card {
     background: white;
     border-radius: 0.5rem;
@@ -489,12 +481,12 @@ a:hover {
     }
 }
 
-/* Admin Page */
-.admin-container {
+/* Stats Page */
+.stats-container {
     max-width: 900px;
 }
 
-.admin-header {
+.stats-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -503,27 +495,27 @@ a:hover {
     gap: 1rem;
 }
 
-.admin-header h1 {
+.stats-header h1 {
     margin-bottom: 0;
 }
 
-.admin-actions {
+.stats-actions {
     display: flex;
     gap: 0.5rem;
 }
 
-.admin-stats {
+.stats-overview {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 1rem;
     margin-bottom: 2rem;
 }
 
-.admin-room {
+.stats-room {
     margin-bottom: 1.5rem;
 }
 
-.admin-room-header {
+.stats-room-header {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
@@ -532,55 +524,45 @@ a:hover {
     margin-bottom: 0.75rem;
 }
 
-.admin-room-header h3 {
+.stats-room-header h3 {
     margin: 0;
     font-size: 1.125rem;
 }
 
-.admin-room-meta {
+.stats-room-meta {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
 }
 
-.admin-badge {
+.stats-badge {
     display: inline-block;
     padding: 0.125rem 0.5rem;
     font-size: 0.75rem;
     background-color: #e5e7eb;
     color: #374151;
     border-radius: 0.25rem;
-    font-family: monospace;
 }
 
-.admin-badge.badge-revealed {
+.stats-badge.badge-revealed {
     background-color: #dbeafe;
     color: #1d4ed8;
 }
 
-.admin-story {
-    font-size: 0.875rem;
-    color: #6b7280;
-    margin-bottom: 0.75rem;
-    padding: 0.5rem;
-    background-color: #f9fafb;
-    border-radius: 0.25rem;
-}
-
-.admin-participants h4 {
+.stats-participants h4 {
     font-size: 0.875rem;
     font-weight: 600;
     margin-bottom: 0.5rem;
     color: #374151;
 }
 
-.admin-participant-list {
+.stats-participant-list {
     list-style: none;
     margin: 0;
     padding: 0;
 }
 
-.admin-participant-item {
+.stats-participant-item {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -589,25 +571,20 @@ a:hover {
     border-bottom: 1px solid #f3f4f6;
 }
 
-.admin-participant-item:last-child {
+.stats-participant-item:last-child {
     border-bottom: none;
 }
 
-.admin-participant-name {
+.stats-participant-name {
     font-weight: 500;
 }
 
-.admin-participant-status {
-    color: #9ca3af;
-    font-size: 0.75rem;
-}
-
-.admin-vote-status {
+.stats-vote-status {
     margin-left: auto;
     font-size: 0.75rem;
     color: #9ca3af;
 }
 
-.admin-vote-status.voted {
+.stats-vote-status.voted {
     color: #22c55e;
 }
