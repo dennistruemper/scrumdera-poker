@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Lettuce Leaf -->
+  <path d="M32 8 Q10 25 15 45 Q25 55 32 56 Q39 55 49 45 Q54 25 32 8" fill="#86efac"/>
+  <path d="M32 12 Q18 28 22 42 Q28 48 32 48 Q36 48 42 42 Q46 28 32 12" fill="#4ade80"/>
+  <path d="M32 56 L32 20" stroke="#22c55e" stroke-width="2" fill="none"/>
+  <path d="M32 30 Q24 35 20 42" stroke="#22c55e" stroke-width="1.5" fill="none"/>
+  <path d="M32 30 Q40 35 44 42" stroke="#22c55e" stroke-width="1.5" fill="none"/>
+</svg>

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Radish -->
+  <ellipse cx="32" cy="38" rx="16" ry="18" fill="#e11d48"/>
+  <ellipse cx="28" cy="32" rx="6" ry="8" fill="#fb7185" opacity="0.4"/>
+  <!-- White bottom -->
+  <path d="M20 48 Q32 60 44 48 Q44 54 32 58 Q20 54 20 48" fill="#fecdd3"/>
+  <!-- Root -->
+  <path d="M32 56 Q34 62 32 64 Q30 62 32 56" fill="#fecdd3"/>
+  <!-- Leaves -->
+  <path d="M26 22 Q20 8 26 4 Q30 10 30 22" fill="#22c55e"/>
+  <path d="M32 20 Q32 4 38 2 Q42 8 38 20" fill="#4ade80"/>
+  <path d="M38 22 Q44 10 40 4 Q36 8 36 22" fill="#22c55e"/>
+</svg>

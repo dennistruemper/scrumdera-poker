@@ -164,40 +164,89 @@ h2 {
     color: #b91c1c;
 }
 
-/* Voting Cards */
+/* Voting Cards - Playing Card Style */
 .vote-cards {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 0.75rem;
+    gap: 1rem;
     margin-bottom: 2rem;
+    padding: 1rem;
 }
 
 .vote-card {
-    width: 4rem;
-    height: 5rem;
+    width: 5.5rem;
+    height: 8rem;
     border: 2px solid #d1d5db;
     border-radius: 0.5rem;
-    background: white;
+    background: linear-gradient(135deg, #fafafa 0%, #f0f0f0 100%);
     display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.25rem;
-    font-weight: 700;
+    flex-direction: column;
+    position: relative;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.2s ease;
+    box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
 }
 
 .vote-card:hover {
-    border-color: #3b82f6;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    border-color: #22c55e;
+    box-shadow: 4px 4px 12px rgba(0, 0, 0, 0.15);
+    transform: translateY(-4px);
 }
 
 .vote-card.selected {
-    background-color: #3b82f6;
+    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+    border-color: #15803d;
+    transform: translateY(-4px) scale(1.05);
+    box-shadow: 4px 4px 16px rgba(34, 197, 94, 0.4);
+}
+
+.vote-card.selected .card-corner {
     color: white;
-    border-color: #2563eb;
-    transform: scale(1.1);
+}
+
+.vote-card.selected .card-center img {
+    filter: brightness(0) invert(1);
+}
+
+/* Card corners with numbers */
+.card-corner {
+    position: absolute;
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: #374151;
+    line-height: 1;
+}
+
+.card-corner-top {
+    top: 0.35rem;
+    left: 0.4rem;
+}
+
+.card-corner-bottom {
+    bottom: 0.35rem;
+    right: 0.4rem;
+    transform: rotate(180deg);
+}
+
+/* Card center with salad image */
+.card-center {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem;
+}
+
+.card-center img {
+    width: 3.75rem;
+    height: 3.75rem;
+    object-fit: contain;
+}
+
+.card-center .card-emoji {
+    font-size: 2rem;
 }
 
 /* Action Buttons Row */

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Avocado Half -->
+  <ellipse cx="32" cy="36" rx="20" ry="24" fill="#365314"/>
+  <ellipse cx="32" cy="36" rx="16" ry="20" fill="#a3e635"/>
+  <ellipse cx="32" cy="38" rx="10" ry="12" fill="#bef264"/>
+  <!-- Pit -->
+  <ellipse cx="32" cy="40" rx="8" ry="10" fill="#854d0e"/>
+  <ellipse cx="30" cy="36" rx="3" ry="4" fill="#a16207" opacity="0.5"/>
+</svg>

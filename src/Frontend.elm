@@ -606,12 +606,29 @@ viewVoteCard model room vote =
 
             else
                 "vote-card"
+
+        cornerText =
+            voteToString vote
+
+        centerContent =
+            case vote of
+                CoffeeBreak ->
+                    span [ Attr.class "card-emoji" ] [ text "☕" ]
+
+                QuestionMark ->
+                    img [ Attr.src "/cards/mystery.svg", Attr.alt "?" ] []
+
+                NumericVote n ->
+                    img [ Attr.src ("/cards/" ++ String.fromInt n ++ ".svg"), Attr.alt cornerText ] []
     in
     button
         [ Attr.class className
         , onClick (CastVote vote)
         ]
-        [ text (voteToString vote) ]
+        [ span [ Attr.class "card-corner card-corner-top" ] [ text cornerText ]
+        , div [ Attr.class "card-center" ] [ centerContent ]
+        , span [ Attr.class "card-corner card-corner-bottom" ] [ text cornerText ]
+        ]
 
 
 voteToString : Vote -> String

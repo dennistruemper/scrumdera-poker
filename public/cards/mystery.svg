@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Mystery Salad Bowl -->
+  <ellipse cx="32" cy="48" rx="24" ry="8" fill="#d97706"/>
+  <path d="M8 48 Q8 56 32 58 Q56 56 56 48 L56 44 Q32 52 8 44 Z" fill="#b45309"/>
+  <ellipse cx="32" cy="44" rx="24" ry="10" fill="#fbbf24"/>
+  
+  <!-- Salad contents peeking out -->
+  <ellipse cx="20" cy="40" rx="6" ry="4" fill="#86efac"/>
+  <ellipse cx="40" cy="38" rx="5" ry="3" fill="#4ade80"/>
+  <circle cx="32" cy="36" r="4" fill="#ef4444"/>
+  <ellipse cx="44" cy="42" rx="4" ry="3" fill="#86efac"/>
+  
+  <!-- Question mark -->
+  <text x="32" y="24" text-anchor="middle" font-size="24" font-weight="bold" fill="#6366f1">?</text>
+</svg>
