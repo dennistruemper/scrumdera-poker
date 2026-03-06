@@ -1,6 +1,7 @@
 module Frontend exposing (..)
 
 import Browser exposing (UrlRequest(..))
+import Browser.Events
 import Browser.Navigation as Nav
 import Dict
 import Html exposing (..)
@@ -34,7 +35,18 @@ app =
 
 subscriptions : Model -> Sub FrontendMsg
 subscriptions _ =
-    Ports.clipboardResult ClipboardResult
+    Sub.batch
+        [ Ports.clipboardResult ClipboardResult
+        , Browser.Events.onVisibilityChange
+            (\visibility ->
+                case visibility of
+                    Browser.Events.Visible ->
+                        TabBecameVisible
+
+                    Browser.Events.Hidden ->
+                        TabBecameHidden
+            )
+        ]
 
 
 init : Url -> Nav.Key -> ( Model, Cmd FrontendMsg )
@@ -236,6 +248,24 @@ update msg model =
 
         RefreshStats ->
             ( model, Lamdera.sendToBackend SubscribeToStats )
+
+        TabBecameVisible ->
+            ( model
+            , if model.roomData /= Nothing then
+                Lamdera.sendToBackend VisibilityPong
+
+              else
+                Cmd.none
+            )
+
+        TabBecameHidden ->
+            ( model
+            , if model.roomData /= Nothing then
+                Lamdera.sendToBackend TabHidden
+
+              else
+                Cmd.none
+            )
 
         NoOpFrontendMsg ->
             ( model, Cmd.none )
@@ -664,6 +694,9 @@ viewParticipant revealed ( _, participant ) =
             if not participant.isConnected then
                 "disconnected"
 
+            else if participant.tabHidden then
+                "away"
+
             else if participant.missedPongs >= 2 then
                 "critical"
 
@@ -673,6 +706,9 @@ viewParticipant revealed ( _, participant ) =
         statusTitle =
             if not participant.isConnected then
                 "Disconnected"
+
+            else if participant.tabHidden then
+                "Away (tab hidden)"
 
             else if participant.missedPongs >= 2 then
                 "Connection critical - may disconnect soon"
@@ -688,7 +724,7 @@ viewParticipant revealed ( _, participant ) =
                 ]
                 []
             , span [] [ text participant.name ]
-            , if participant.missedPongs >= 2 && participant.isConnected then
+            , if participant.missedPongs >= 2 && participant.isConnected && not participant.tabHidden then
                 span [ Attr.class "connection-warning critical" ]
                     [ text "⚠️" ]
 
@@ -856,6 +892,9 @@ viewStatsParticipant index participant =
         connectionClass =
             if not participant.isConnected then
                 "disconnected"
+
+            else if participant.tabHidden then
+                "away"
 
             else if participant.missedPongs >= 2 then
                 "critical"

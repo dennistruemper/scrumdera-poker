@@ -11,6 +11,11 @@ type alias Model =
     BackendModel
 
 
+hiddenTabGraceTicks : Int
+hiddenTabGraceTicks =
+    360
+
+
 app =
     Lamdera.backend
         { init = init
@@ -149,6 +154,8 @@ updateFromFrontend sessionId clientId msg model =
                     , vote = Nothing
                     , isConnected = True
                     , missedPongs = 0
+                    , tabHidden = False
+                    , hiddenPingTicks = 0
                     }
 
                 room =
@@ -188,6 +195,8 @@ updateFromFrontend sessionId clientId msg model =
                                 , vote = Nothing
                                 , isConnected = True
                                 , missedPongs = 0
+                                , tabHidden = False
+                                , hiddenPingTicks = 0
                                 }
 
                             updatedRoom =
@@ -288,36 +297,28 @@ updateFromFrontend sessionId clientId msg model =
             ( { model | statsViewers = Set.remove clientId model.statsViewers }, Cmd.none )
 
         Pong ->
-            -- Reset missed pongs counter for this client
-            case Dict.get clientId model.clientToRoom of
-                Nothing ->
-                    ( model, Cmd.none )
+            handleHeartbeatResponse False clientId model
 
-                Just roomId ->
-                    case Dict.get roomId model.rooms of
-                        Nothing ->
-                            ( model, Cmd.none )
+        VisibilityPong ->
+            handleHeartbeatResponse True clientId model
 
-                        Just room ->
-                            -- Check if participant was in critical state (missedPongs >= 2)
-                            let
-                                wasCritical =
-                                    Dict.get clientId room.participants
-                                        |> Maybe.map (\p -> p.missedPongs >= 2)
-                                        |> Maybe.withDefault False
-
-                                updatedRoom =
-                                    resetMissedPongs clientId room
-
-                                newModel =
-                                    { model | rooms = Dict.insert roomId updatedRoom model.rooms }
-                            in
-                            -- Only broadcast if clearing critical status (visible UI change)
-                            if wasCritical then
-                                ( newModel, broadcastRoomUpdate updatedRoom newModel )
-
-                            else
-                                ( newModel, Cmd.none )
+        TabHidden ->
+            updateRoomForClient clientId model <|
+                \room ->
+                    { room
+                        | participants =
+                            Dict.update clientId
+                                (Maybe.map
+                                    (\p ->
+                                        { p
+                                            | missedPongs = 0
+                                            , tabHidden = True
+                                            , hiddenPingTicks = 0
+                                        }
+                                    )
+                                )
+                                room.participants
+                    }
 
 
 
@@ -372,7 +373,7 @@ markParticipantDisconnected clientId room =
     { room
         | participants =
             Dict.update clientId
-                (Maybe.map (\p -> { p | isConnected = False }))
+                (Maybe.map (\p -> { p | isConnected = False, tabHidden = False, hiddenPingTicks = 0 }))
                 room.participants
     }
 
@@ -456,6 +457,65 @@ resetMissedPongs clientId room =
     }
 
 
+handleHeartbeatResponse : Bool -> ClientId -> Model -> ( Model, Cmd BackendMsg )
+handleHeartbeatResponse clearHiddenState clientId model =
+    case Dict.get clientId model.clientToRoom of
+        Nothing ->
+            ( model, Cmd.none )
+
+        Just roomId ->
+            case Dict.get roomId model.rooms of
+                Nothing ->
+                    ( model, Cmd.none )
+
+                Just room ->
+                    let
+                        participantBeforeUpdate =
+                            Dict.get clientId room.participants
+
+                        wasCritical =
+                            participantBeforeUpdate
+                                |> Maybe.map (\p -> p.missedPongs >= 2)
+                                |> Maybe.withDefault False
+
+                        wasHidden =
+                            participantBeforeUpdate
+                                |> Maybe.map .tabHidden
+                                |> Maybe.withDefault False
+
+                        updatedRoom =
+                            resetMissedPongs clientId room
+                                |> (\updated ->
+                                        if clearHiddenState then
+                                            { updated
+                                                | participants =
+                                                    Dict.update clientId
+                                                        (Maybe.map (\p -> { p | tabHidden = False, hiddenPingTicks = 0 }))
+                                                        updated.participants
+                                            }
+
+                                        else
+                                            updated
+                                   )
+
+                        newModel =
+                            { model | rooms = Dict.insert roomId updatedRoom model.rooms }
+                    in
+                    if wasHidden then
+                        ( newModel
+                        , Cmd.batch
+                            [ broadcastRoomUpdate updatedRoom newModel
+                            , broadcastStatsUpdate newModel
+                            ]
+                        )
+
+                    else if wasCritical then
+                        ( newModel, broadcastRoomUpdate updatedRoom newModel )
+
+                    else
+                        ( newModel, Cmd.none )
+
+
 {-| Process a room during ping tick: increment missed pongs and handle timeouts
 Returns: (updated room, list of timed out users with their clientIds, commands)
 -}
@@ -468,30 +528,46 @@ processRoomPing :
 processRoomPing model roomId room ( accRooms, accTimedOut, accCmds ) =
     let
         -- Increment missed pongs for all participants (connected or disconnected)
-        -- Only track status changes that affect UI: 1->2 (critical warning)
-        -- We don't broadcast for 0->1 to avoid flicker (pong usually arrives quickly)
+        -- Hidden tabs get a long grace period before they are removed.
+        -- Visible/disconnected participants keep the existing short timeout behavior.
         ( updatedParticipants, newTimedOut, hasStatusChange ) =
             Dict.foldl
                 (\cId participant ( pAcc, tAcc, statusChanged ) ->
-                    let
-                        newMissedPongs =
-                            participant.missedPongs + 1
+                    if participant.tabHidden then
+                        let
+                            newHiddenPingTicks =
+                                participant.hiddenPingTicks + 1
+                        in
+                        if newHiddenPingTicks >= hiddenTabGraceTicks then
+                            -- Hidden too long - remove them using the normal timeout flow
+                            ( pAcc, ( cId, participant.name ) :: tAcc, True )
 
-                        -- Only broadcast when entering critical state (1->2)
-                        -- 0->1 is silent, timeout (2->3) handled separately
-                        crossedThreshold =
-                            participant.missedPongs == 1 && newMissedPongs == 2
-                    in
-                    if newMissedPongs >= 3 then
-                        -- User timed out - remove them
-                        ( pAcc, ( cId, participant.name ) :: tAcc, True )
+                        else
+                            ( Dict.insert cId { participant | hiddenPingTicks = newHiddenPingTicks, missedPongs = 0 } pAcc
+                            , tAcc
+                            , statusChanged
+                            )
 
                     else
-                        -- Keep participant, increment counter
-                        ( Dict.insert cId { participant | missedPongs = newMissedPongs } pAcc
-                        , tAcc
-                        , statusChanged || crossedThreshold
-                        )
+                        let
+                            newMissedPongs =
+                                participant.missedPongs + 1
+
+                            -- Only broadcast when entering critical state (1->2)
+                            -- 0->1 is silent, timeout (2->3) handled separately
+                            crossedThreshold =
+                                participant.missedPongs == 1 && newMissedPongs == 2
+                        in
+                        if newMissedPongs >= 3 then
+                            -- User timed out - remove them
+                            ( pAcc, ( cId, participant.name ) :: tAcc, True )
+
+                        else
+                            -- Keep participant, increment counter
+                            ( Dict.insert cId { participant | missedPongs = newMissedPongs } pAcc
+                            , tAcc
+                            , statusChanged || crossedThreshold
+                            )
                 )
                 ( Dict.empty, [], False )
                 room.participants
@@ -573,6 +649,7 @@ buildStats model =
                                     { isConnected = p.isConnected
                                     , missedPongs = p.missedPongs
                                     , hasVoted = p.vote /= Nothing
+                                    , tabHidden = p.tabHidden
                                     }
                                 )
                     , votesRevealed = room.votesRevealed

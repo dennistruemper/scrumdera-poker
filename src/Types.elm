@@ -33,6 +33,8 @@ type alias Participant =
     , vote : Maybe Vote
     , isConnected : Bool
     , missedPongs : Int
+    , tabHidden : Bool
+    , hiddenPingTicks : Int
     }
 
 
@@ -83,6 +85,7 @@ type alias ParticipantSummary =
     { isConnected : Bool
     , missedPongs : Int
     , hasVoted : Bool
+    , tabHidden : Bool
     }
 
 
@@ -144,6 +147,8 @@ type FrontendMsg
     | ClipboardResult { success : Bool, message : String }
     | ClearClipboardFeedback
     | RefreshStats
+    | TabBecameVisible
+    | TabBecameHidden
     | NoOpFrontendMsg
 
 
@@ -163,6 +168,8 @@ type ToBackend
     | SubscribeToStats
     | UnsubscribeFromStats
     | Pong -- Response to ping
+    | VisibilityPong -- User returned to the tab
+    | TabHidden -- User switched to another tab
 
 
 -- =============================================================================
