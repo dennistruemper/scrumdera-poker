@@ -581,13 +581,16 @@ viewNotification notification =
 
 voteOptions : List Vote
 voteOptions =
-    [ NumericVote 1
+    [ NumericVote 0
+    , HalfPoint
+    , NumericVote 1
     , NumericVote 2
     , NumericVote 3
     , NumericVote 5
     , NumericVote 8
     , NumericVote 13
     , NumericVote 21
+    , NumericVote 100
     , QuestionMark
     , CoffeeBreak
     ]
@@ -622,6 +625,9 @@ viewVoteCard model room vote =
                 QuestionMark ->
                     img [ Attr.src "/cards/mystery.svg", Attr.alt "?" ] []
 
+                HalfPoint ->
+                    img [ Attr.src "/cards/half.svg", Attr.alt "½" ] []
+
                 NumericVote n ->
                     img [ Attr.src ("/cards/" ++ String.fromInt n ++ ".svg"), Attr.alt cornerText ] []
     in
@@ -640,6 +646,9 @@ voteToString vote =
     case vote of
         NumericVote n ->
             String.fromInt n
+
+        HalfPoint ->
+            "½"
 
         QuestionMark ->
             "?"
@@ -715,6 +724,9 @@ viewResults room =
                         case v of
                             NumericVote n ->
                                 Just (toFloat n)
+
+                            HalfPoint ->
+                                Just 0.5
 
                             _ ->
                                 Nothing

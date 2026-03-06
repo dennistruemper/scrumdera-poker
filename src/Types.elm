@@ -23,6 +23,7 @@ type alias Pin =
 
 type Vote
     = NumericVote Int
+    | HalfPoint -- 1/2
     | QuestionMark
     | CoffeeBreak
 

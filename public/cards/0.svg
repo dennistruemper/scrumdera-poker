@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Crouton - minimal for "zero" -->
+  <rect x="16" y="24" width="32" height="16" rx="4" fill="#d97706" transform="rotate(-15 32 32)"/>
+  <rect x="20" y="28" width="24" height="8" rx="2" fill="#fbbf24" transform="rotate(-15 32 32)"/>
+</svg>
