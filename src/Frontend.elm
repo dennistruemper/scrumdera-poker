@@ -21,6 +21,14 @@ type alias Model =
     FrontendModel
 
 
+defaultStatsFilters : StatsFilters
+defaultStatsFilters =
+    { recentDays = 7
+    , minParticipants = 1
+    , minVotes = 1
+    }
+
+
 app =
     Lamdera.frontend
         { init = init
@@ -54,6 +62,9 @@ init url key =
     let
         page =
             parseUrl url
+
+        statsFilters =
+            defaultStatsFilters
 
         -- Pre-fill join fields if we're on a room page with PIN
         ( joinRoomId, joinRoomPin ) =
@@ -99,10 +110,11 @@ init url key =
       , baseUrl = baseUrl
       , notifications = []
       , stats = Nothing
+      , statsFilters = statsFilters
       }
     , case page of
         StatsPage ->
-            Lamdera.sendToBackend SubscribeToStats
+            Lamdera.sendToBackend (SubscribeToStats statsFilters)
 
         _ ->
             Cmd.none
@@ -163,7 +175,7 @@ update msg model =
                 -- Subscribe to stats if entering stats page
                 subscribeCmd =
                     if newPage == StatsPage then
-                        Lamdera.sendToBackend SubscribeToStats
+                        Lamdera.sendToBackend (SubscribeToStats model.statsFilters)
 
                     else
                         Cmd.none
@@ -247,7 +259,55 @@ update msg model =
             ( { model | clipboardFeedback = Nothing }, Cmd.none )
 
         RefreshStats ->
-            ( model, Lamdera.sendToBackend SubscribeToStats )
+            ( model, Lamdera.sendToBackend (UpdateStatsFilters model.statsFilters) )
+
+        SetStatsRecentDays rawValue ->
+            let
+                currentFilters =
+                    model.statsFilters
+
+                newFilters =
+                    { currentFilters | recentDays = parseStatsFilterInput 1 100 7 rawValue }
+            in
+            ( { model | statsFilters = newFilters }
+            , if model.page == StatsPage then
+                Lamdera.sendToBackend (UpdateStatsFilters newFilters)
+
+              else
+                Cmd.none
+            )
+
+        SetStatsMinParticipants rawValue ->
+            let
+                currentFilters =
+                    model.statsFilters
+
+                newFilters =
+                    { currentFilters | minParticipants = parseStatsFilterInput 1 1000 1 rawValue }
+            in
+            ( { model | statsFilters = newFilters }
+            , if model.page == StatsPage then
+                Lamdera.sendToBackend (UpdateStatsFilters newFilters)
+
+              else
+                Cmd.none
+            )
+
+        SetStatsMinVotes rawValue ->
+            let
+                currentFilters =
+                    model.statsFilters
+
+                newFilters =
+                    { currentFilters | minVotes = parseStatsFilterInput 0 10000 0 rawValue }
+            in
+            ( { model | statsFilters = newFilters }
+            , if model.page == StatsPage then
+                Lamdera.sendToBackend (UpdateStatsFilters newFilters)
+
+              else
+                Cmd.none
+            )
 
         TabBecameVisible ->
             ( model
@@ -316,7 +376,7 @@ updateFromBackend msg model =
             ( { model | error = Just err }, Cmd.none )
 
         StatsData stats ->
-            ( { model | stats = Just stats }, Cmd.none )
+            ( { model | stats = Just stats, statsFilters = stats.filters }, Cmd.none )
 
         Ping ->
             -- Respond with Pong and decrement notification counters
@@ -804,7 +864,7 @@ viewStatsPage : Model -> Html FrontendMsg
 viewStatsPage model =
     div [ Attr.class "container stats-container" ]
         [ div [ Attr.class "stats-header" ]
-            [ h1 [] [ text "Live Stats" ]
+            [ h1 [] [ text "Anonymous Stats" ]
             , div [ Attr.class "stats-actions" ]
                 [ a [ Attr.href "/", Attr.class "btn btn-secondary btn-small" ]
                     [ text "← Home" ]
@@ -817,109 +877,154 @@ viewStatsPage model =
 
             Just stats ->
                 div []
-                    [ -- Stats overview
-                      div [ Attr.class "stats-overview" ]
-                        [ div [ Attr.class "stat-card" ]
-                            [ div [ Attr.class "stat-value" ] [ text (String.fromInt stats.totalRooms) ]
-                            , div [ Attr.class "stat-label" ] [ text "Active Rooms" ]
-                            ]
-                        , div [ Attr.class "stat-card" ]
-                            [ div [ Attr.class "stat-value" ] [ text (String.fromInt stats.totalConnectedClients) ]
-                            , div [ Attr.class "stat-label" ] [ text "Connected Users" ]
+                    [ div [ Attr.class "stats-filter-card card" ]
+                        [ h2 [] [ text "Historical Filters" ]
+                        , p [ Attr.class "text-muted" ]
+                            [ text "Exclude very small sessions so test traffic does not pollute public history." ]
+                        , div [ Attr.class "stats-filter-grid" ]
+                            [ div [ Attr.class "form-group stats-slider-group" ]
+                                [ label [ Attr.class "form-label", Attr.for "stats-recent-days" ]
+                                    [ text ("Recent window: last " ++ String.fromInt model.statsFilters.recentDays ++ " days") ]
+                                , input
+                                    [ Attr.id "stats-recent-days"
+                                    , Attr.class "stats-range-input"
+                                    , Attr.type_ "range"
+                                    , Attr.min "1"
+                                    , Attr.max "100"
+                                    , Attr.step "1"
+                                    , Attr.value (String.fromInt model.statsFilters.recentDays)
+                                    , onInput SetStatsRecentDays
+                                    ]
+                                    []
+                                ]
+                            , div [ Attr.class "form-group" ]
+                                [ label [ Attr.class "form-label", Attr.for "stats-min-participants" ] [ text "Minimum users per session" ]
+                                , input
+                                    [ Attr.id "stats-min-participants"
+                                    , Attr.class "form-input"
+                                    , Attr.type_ "number"
+                                    , Attr.min "1"
+                                    , Attr.value (String.fromInt model.statsFilters.minParticipants)
+                                    , onInput SetStatsMinParticipants
+                                    ]
+                                    []
+                                ]
+                            , div [ Attr.class "form-group" ]
+                                [ label [ Attr.class "form-label", Attr.for "stats-min-votes" ] [ text "Minimum votes per session" ]
+                                , input
+                                    [ Attr.id "stats-min-votes"
+                                    , Attr.class "form-input"
+                                    , Attr.type_ "number"
+                                    , Attr.min "0"
+                                    , Attr.value (String.fromInt model.statsFilters.minVotes)
+                                    , onInput SetStatsMinVotes
+                                    ]
+                                    []
+                                ]
                             ]
                         ]
-
-                    -- Rooms list
-                    , if List.isEmpty stats.rooms then
-                        div [ Attr.class "card text-center text-muted" ]
-                            [ text "No active rooms" ]
-
-                      else
-                        div []
-                            (List.map viewStatsRoom stats.rooms)
+                    , h2 [ Attr.class "stats-section-title" ] [ text "Live Now" ]
+                    , div [ Attr.class "stats-overview" ]
+                        [ viewStatCard "Active Rooms" (String.fromInt stats.live.activeRooms)
+                        , viewStatCard "Connected Users" (String.fromInt stats.live.connectedUsers)
+                        , viewStatCard "Away Users" (String.fromInt stats.live.awayUsers)
+                        , viewStatCard "Rooms Voting" (String.fromInt stats.live.roomsVoting)
+                        , viewStatCard "Revealed Rooms" (String.fromInt stats.live.roomsRevealed)
+                        ]
+                    , viewHistoricalSection ("Last " ++ String.fromInt model.statsFilters.recentDays ++ " Days") stats.recent
+                    , viewHistoricalSection "All Time" stats.allTime
                     ]
         ]
 
 
-viewStatsRoom : RoomSummary -> Html FrontendMsg
-viewStatsRoom room =
-    div [ Attr.class "stats-room card" ]
-        [ div [ Attr.class "stats-room-header" ]
-            [ h3 [] [ text room.name ]
-            , div [ Attr.class "stats-room-meta" ]
-                [ span
-                    [ Attr.class
-                        (if room.votesRevealed then
-                            "stats-badge badge-revealed"
-
-                         else
-                            "stats-badge"
-                        )
-                    ]
-                    [ text
-                        (if room.votesRevealed then
-                            "Votes Revealed"
-
-                         else
-                            "Voting"
-                        )
-                    ]
-                ]
+viewHistoricalSection : String -> HistoricalStats -> Html FrontendMsg
+viewHistoricalSection title stats =
+    div [ Attr.class "stats-history-section" ]
+        [ h2 [ Attr.class "stats-section-title" ] [ text title ]
+        , div [ Attr.class "stats-overview" ]
+            [ viewStatCard "Sessions" (String.fromInt stats.sessionCount)
+            , viewStatCard "Completed" (String.fromInt stats.completedSessionCount)
+            , viewStatCard "Votes Cast" (String.fromInt stats.totalVotes)
+            , viewStatCard "Avg Users / Session" (formatOneDecimal stats.averageParticipants)
+            , viewStatCard "Avg Votes / Session" (formatOneDecimal stats.averageVotes)
+            , viewStatCard "Reveal Rate" (formatPercent stats.revealRate)
             ]
-        , div [ Attr.class "stats-participants" ]
-            [ h4 []
-                [ text
-                    ("Users: "
-                        ++ String.fromInt room.connectedCount
-                        ++ "/"
-                        ++ String.fromInt room.participantCount
-                        ++ " connected"
+        , div [ Attr.class "stats-detail-grid" ]
+            [ viewBucketCard "Card Choice %" stats.cardPercentages
+            , viewBucketCard "Room Size Distribution" (List.map roomSizeBucketToCardPercentage stats.roomSizeBuckets)
+            , viewBucketCard "Sessions by Day" (List.map dayCountToCardPercentage stats.sessionsByDay)
+            ]
+        ]
+
+
+viewStatCard : String -> String -> Html FrontendMsg
+viewStatCard label value =
+    div [ Attr.class "stat-card" ]
+        [ div [ Attr.class "stat-value" ] [ text value ]
+        , div [ Attr.class "stat-label" ] [ text label ]
+        ]
+
+
+viewBucketCard : String -> List CardPercentage -> Html FrontendMsg
+viewBucketCard title items =
+    div [ Attr.class "stats-bucket-card card" ]
+        [ h3 [] [ text title ]
+        , if List.isEmpty items then
+            p [ Attr.class "text-muted" ] [ text "No data yet" ]
+
+          else
+            ul [ Attr.class "stats-bucket-list" ]
+                (List.map
+                    (\item ->
+                        li [ Attr.class "stats-bucket-item" ]
+                            [ span [ Attr.class "stats-bucket-label" ] [ text item.label ]
+                            , span [ Attr.class "stats-bucket-value" ] [ text (cardPercentageDisplay item) ]
+                            ]
                     )
-                ]
-            , if List.isEmpty room.participants then
-                p [ Attr.class "text-muted" ] [ text "No users" ]
-
-              else
-                ul [ Attr.class "stats-participant-list" ]
-                    (List.indexedMap viewStatsParticipant room.participants)
-            ]
+                    items
+                )
         ]
 
 
-viewStatsParticipant : Int -> ParticipantSummary -> Html FrontendMsg
-viewStatsParticipant index participant =
-    let
-        connectionClass =
-            if not participant.isConnected then
-                "disconnected"
+roomSizeBucketToCardPercentage : RoomSizeBucket -> CardPercentage
+roomSizeBucketToCardPercentage bucket =
+    { label = bucket.label
+    , voteCount = bucket.sessionCount
+    , percentage = 0
+    }
 
-            else if participant.tabHidden then
-                "away"
 
-            else if participant.missedPongs >= 2 then
-                "critical"
+dayCountToCardPercentage : DayCount -> CardPercentage
+dayCountToCardPercentage dayCount =
+    { label = dayCount.dayKey
+    , voteCount = dayCount.sessionCount
+    , percentage = 0
+    }
 
-            else
-                "connected"
-    in
-    li [ Attr.class "stats-participant-item" ]
-        [ span [ Attr.class ("status-dot " ++ connectionClass) ] []
-        , span [ Attr.class "stats-participant-name" ] [ text ("User " ++ String.fromInt (index + 1)) ]
-        , span
-            [ Attr.class
-                (if participant.hasVoted then
-                    "stats-vote-status voted"
 
-                 else
-                    "stats-vote-status"
-                )
-            ]
-            [ text
-                (if participant.hasVoted then
-                    "✓ Voted"
+cardPercentageDisplay : CardPercentage -> String
+cardPercentageDisplay item =
+    if item.percentage > 0 then
+        formatPercent item.percentage ++ " (" ++ String.fromInt item.voteCount ++ ")"
 
-                 else
-                    "..."
-                )
-            ]
-        ]
+    else
+        String.fromInt item.voteCount
+
+
+formatPercent : Float -> String
+formatPercent value =
+    formatOneDecimal value ++ "%"
+
+
+formatOneDecimal : Float -> String
+formatOneDecimal value =
+    String.fromFloat (toFloat (round (value * 10)) / 10)
+
+
+parseStatsFilterInput : Int -> Int -> Int -> String -> Int
+parseStatsFilterInput minimumValue maximumValue fallbackValue rawValue =
+    rawValue
+        |> String.toInt
+        |> Maybe.withDefault fallbackValue
+        |> max minimumValue
+        |> min maximumValue

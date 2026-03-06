@@ -4,7 +4,7 @@ import Browser exposing (UrlRequest)
 import Browser.Navigation exposing (Key)
 import Dict exposing (Dict)
 import Lamdera exposing (ClientId)
-import Set exposing (Set)
+import Time
 import Url exposing (Url)
 
 
@@ -66,26 +66,70 @@ type Page
 
 
 type alias Stats =
-    { totalRooms : Int
-    , totalConnectedClients : Int
-    , rooms : List RoomSummary
+    { filters : StatsFilters
+    , live : LiveStats
+    , recent : HistoricalStats
+    , allTime : HistoricalStats
     }
 
 
-type alias RoomSummary =
-    { name : String
+type alias StatsFilters =
+    { recentDays : Int
+    , minParticipants : Int
+    , minVotes : Int
+    }
+
+
+type alias LiveStats =
+    { activeRooms : Int
+    , connectedUsers : Int
+    , awayUsers : Int
+    , roomsVoting : Int
+    , roomsRevealed : Int
+    }
+
+
+type alias HistoricalStats =
+    { windowDays : Maybe Int
+    , sessionCount : Int
+    , completedSessionCount : Int
+    , totalVotes : Int
+    , averageParticipants : Float
+    , averageVotes : Float
+    , revealRate : Float
+    , cardPercentages : List CardPercentage
+    , roomSizeBuckets : List RoomSizeBucket
+    , sessionsByDay : List DayCount
+    }
+
+
+type alias CardPercentage =
+    { label : String
+    , voteCount : Int
+    , percentage : Float
+    }
+
+
+type alias RoomSizeBucket =
+    { label : String
+    , sessionCount : Int
+    }
+
+
+type alias DayCount =
+    { dayKey : String
+    , sessionCount : Int
+    }
+
+
+type alias SessionStats =
+    { startedDayKey : String
+    , startedDayIndex : Int
     , participantCount : Int
-    , connectedCount : Int
-    , participants : List ParticipantSummary
-    , votesRevealed : Bool
-    }
-
-
-type alias ParticipantSummary =
-    { isConnected : Bool
-    , missedPongs : Int
-    , hasVoted : Bool
-    , tabHidden : Bool
+    , totalVotes : Int
+    , reachedReveal : Bool
+    , cardCounts : Dict String Int
+    , currentRoundVotes : Dict ClientId Vote
     }
 
 
@@ -109,6 +153,7 @@ type alias FrontendModel =
     , baseUrl : String
     , notifications : List Notification
     , stats : Maybe Stats
+    , statsFilters : StatsFilters
     }
 
 
@@ -120,7 +165,11 @@ type alias FrontendModel =
 type alias BackendModel =
     { rooms : Dict RoomId Room
     , clientToRoom : Dict ClientId RoomId
-    , statsViewers : Set ClientId
+    , statsViewers : Dict ClientId StatsFilters
+    , activeSessionStats : Dict RoomId SessionStats
+    , completedSessionsByDay : Dict String (List SessionStats)
+    , currentDayKey : String
+    , currentDayIndex : Int
     }
 
 
@@ -147,6 +196,9 @@ type FrontendMsg
     | ClipboardResult { success : Bool, message : String }
     | ClearClipboardFeedback
     | RefreshStats
+    | SetStatsRecentDays String
+    | SetStatsMinParticipants String
+    | SetStatsMinVotes String
     | TabBecameVisible
     | TabBecameHidden
     | NoOpFrontendMsg
@@ -165,7 +217,8 @@ type ToBackend
     | RevealVotes
     | ResetVotes
     | LeaveRoom
-    | SubscribeToStats
+    | SubscribeToStats StatsFilters
+    | UpdateStatsFilters StatsFilters
     | UnsubscribeFromStats
     | Pong -- Response to ping
     | VisibilityPong -- User returned to the tab
@@ -180,7 +233,8 @@ type ToBackend
 type BackendMsg
     = ClientConnected Lamdera.SessionId ClientId
     | ClientDisconnected Lamdera.SessionId ClientId
-    | PingTick
+    | InitializeCurrentDay Time.Posix
+    | PingTick Time.Posix
     | NoOpBackendMsg
 
 

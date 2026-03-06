@@ -2,13 +2,21 @@ module Backend exposing (..)
 
 import Dict exposing (Dict)
 import Lamdera exposing (ClientId, SessionId, sendToFrontend)
-import Set exposing (Set)
+import Task
 import Time
 import Types exposing (..)
 
 
 type alias Model =
     BackendModel
+
+
+type alias PingProcessState =
+    { rooms : Dict RoomId Room
+    , timedOutUsers : List ( ClientId, String )
+    , cmds : List (Cmd BackendMsg)
+    , closedRoomIds : List RoomId
+    }
 
 
 hiddenTabGraceTicks : Int
@@ -29,9 +37,13 @@ init : ( Model, Cmd BackendMsg )
 init =
     ( { rooms = Dict.empty
       , clientToRoom = Dict.empty
-      , statsViewers = Set.empty
+      , statsViewers = Dict.empty
+      , activeSessionStats = Dict.empty
+      , completedSessionsByDay = Dict.empty
+      , currentDayKey = "1970-01-01"
+      , currentDayIndex = 0
       }
-    , Cmd.none
+    , Time.now |> Task.perform InitializeCurrentDay
     )
 
 
@@ -40,7 +52,7 @@ subscriptions _ =
     Sub.batch
         [ Lamdera.onConnect ClientConnected
         , Lamdera.onDisconnect ClientDisconnected
-        , Time.every 5000 (\_ -> PingTick)
+        , Time.every 5000 PingTick
         ]
 
 
@@ -51,11 +63,14 @@ update msg model =
             -- Client connected, nothing to do until they join a room
             ( model, Cmd.none )
 
+        InitializeCurrentDay now ->
+            ( updateCurrentDay now model, Cmd.none )
+
         ClientDisconnected _ clientId ->
             -- Remove from stats viewers
             let
                 modelWithoutStatsViewer =
-                    { model | statsViewers = Set.remove clientId model.statsViewers }
+                    { model | statsViewers = Dict.remove clientId model.statsViewers }
             in
             -- Mark participant as disconnected and check if room should be cleaned up
             case Dict.get clientId modelWithoutStatsViewer.clientToRoom of
@@ -97,42 +112,52 @@ update msg model =
                             Nothing ->
                                 ( cleanedModel, statsCmds )
 
-        PingTick ->
+        PingTick now ->
             -- Increment missed pongs for all participants and check for timeouts
             let
-                ( updatedRooms, timedOutUsers, cmds ) =
+                modelWithCurrentDay =
+                    updateCurrentDay now model
+
+                pingState =
                     Dict.foldl
-                        (processRoomPing model)
-                        ( Dict.empty, [], [] )
-                        model.rooms
+                        (processRoomPing modelWithCurrentDay)
+                        { rooms = Dict.empty
+                        , timedOutUsers = []
+                        , cmds = []
+                        , closedRoomIds = []
+                        }
+                        modelWithCurrentDay.rooms
 
                 -- Remove timed out users from clientToRoom
                 updatedClientToRoom =
                     List.foldl
                         (\( cId, _ ) acc -> Dict.remove cId acc)
-                        model.clientToRoom
-                        timedOutUsers
+                        modelWithCurrentDay.clientToRoom
+                        pingState.timedOutUsers
 
-                newModel =
-                    { model
-                        | rooms = updatedRooms
+                baseModel =
+                    { modelWithCurrentDay
+                        | rooms = pingState.rooms
                         , clientToRoom = updatedClientToRoom
                     }
 
+                newModel =
+                    archiveClosedSessions pingState.closedRoomIds baseModel
+
                 -- Send pings to all connected clients
                 pingCmds =
-                    Dict.keys model.clientToRoom
+                    Dict.keys newModel.clientToRoom
                         |> List.map (\cId -> sendToFrontend cId Ping)
 
                 -- Broadcast stats update if anyone timed out
                 statsCmds =
-                    if List.isEmpty timedOutUsers then
+                    if List.isEmpty pingState.timedOutUsers then
                         []
 
                     else
                         [ broadcastStatsUpdate newModel ]
             in
-            ( newModel, Cmd.batch (cmds ++ pingCmds ++ statsCmds) )
+            ( newModel, Cmd.batch (pingState.cmds ++ pingCmds ++ statsCmds) )
 
         NoOpBackendMsg ->
             ( model, Cmd.none )
@@ -167,7 +192,8 @@ updateFromFrontend sessionId clientId msg model =
                     }
 
                 newModel =
-                    { model
+                    startActiveSession roomId 1
+                        { model
                         | rooms = Dict.insert roomId room model.rooms
                         , clientToRoom = Dict.insert clientId roomId model.clientToRoom
                     }
@@ -203,7 +229,8 @@ updateFromFrontend sessionId clientId msg model =
                                 { room | participants = Dict.insert clientId participant room.participants }
 
                             newModel =
-                                { model
+                                incrementActiveSessionParticipants roomId
+                                    { model
                                     | rooms = Dict.insert roomId updatedRoom model.rooms
                                     , clientToRoom = Dict.insert clientId roomId model.clientToRoom
                                 }
@@ -217,8 +244,8 @@ updateFromFrontend sessionId clientId msg model =
                         )
 
         SubmitVote vote ->
-            updateRoomForClient clientId model <|
-                \room ->
+            updateRoomAndSessionForClient clientId model <|
+                \room session ->
                     let
                         updatedRoom =
                             { room
@@ -228,34 +255,41 @@ updateFromFrontend sessionId clientId msg model =
                                         room.participants
                             }
 
-                        -- Check for auto-reveal
                         finalRoom =
                             checkAutoReveal updatedRoom
+
+                        updatedSession =
+                            { session | currentRoundVotes = Dict.insert clientId vote session.currentRoundVotes }
                     in
-                    finalRoom
+                    ( finalRoom, updatedSession )
 
         ClearMyVote ->
-            updateRoomForClient clientId model <|
-                \room ->
-                    { room
+            updateRoomAndSessionForClient clientId model <|
+                \room session ->
+                    ( { room
                         | participants =
                             Dict.update clientId
                                 (Maybe.map (\p -> { p | vote = Nothing }))
                                 room.participants
-                    }
+                      }
+                    , { session | currentRoundVotes = Dict.remove clientId session.currentRoundVotes }
+                    )
 
         RevealVotes ->
-            updateRoomForClient clientId model <|
-                \room -> { room | votesRevealed = True }
+            updateRoomAndSessionForClient clientId model <|
+                \room session ->
+                    ( { room | votesRevealed = True }, session )
 
         ResetVotes ->
-            updateRoomForClient clientId model <|
-                \room ->
-                    { room
+            updateRoomAndSessionForClient clientId model <|
+                \room session ->
+                    ( { room
                         | votesRevealed = False
                         , participants =
                             Dict.map (\_ p -> { p | vote = Nothing }) room.participants
-                    }
+                      }
+                    , { session | currentRoundVotes = Dict.empty }
+                    )
 
         LeaveRoom ->
             case Dict.get clientId model.clientToRoom of
@@ -286,15 +320,22 @@ updateFromFrontend sessionId clientId msg model =
                         Nothing ->
                             ( cleanedModel, statsCmds )
 
-        SubscribeToStats ->
+        SubscribeToStats filters ->
             let
                 newModel =
-                    { model | statsViewers = Set.insert clientId model.statsViewers }
+                    { model | statsViewers = Dict.insert clientId filters model.statsViewers }
             in
-            ( newModel, sendToFrontend clientId (StatsData (buildStats newModel)) )
+            ( newModel, sendToFrontend clientId (StatsData (buildStats filters newModel)) )
+
+        UpdateStatsFilters filters ->
+            let
+                newModel =
+                    { model | statsViewers = Dict.insert clientId filters model.statsViewers }
+            in
+            ( newModel, sendToFrontend clientId (StatsData (buildStats filters newModel)) )
 
         UnsubscribeFromStats ->
-            ( { model | statsViewers = Set.remove clientId model.statsViewers }, Cmd.none )
+            ( { model | statsViewers = Dict.remove clientId model.statsViewers }, Cmd.none )
 
         Pong ->
             handleHeartbeatResponse False clientId model
@@ -356,6 +397,43 @@ updateRoomForClient clientId model updateFn =
                     )
 
 
+updateRoomAndSessionForClient : ClientId -> Model -> (Room -> SessionStats -> ( Room, SessionStats )) -> ( Model, Cmd BackendMsg )
+updateRoomAndSessionForClient clientId model updateFn =
+    case Dict.get clientId model.clientToRoom of
+        Nothing ->
+            ( model, Cmd.none )
+
+        Just roomId ->
+            case ( Dict.get roomId model.rooms, Dict.get roomId model.activeSessionStats ) of
+                ( Just room, Just sessionStats ) ->
+                    let
+                        ( updatedRoomBeforeFinalize, updatedSessionBeforeFinalize ) =
+                            updateFn room sessionStats
+
+                        finalizedSession =
+                            if not room.votesRevealed && updatedRoomBeforeFinalize.votesRevealed then
+                                finalizeSessionRound updatedSessionBeforeFinalize
+
+                            else
+                                updatedSessionBeforeFinalize
+
+                        newModel =
+                            { model
+                                | rooms = Dict.insert roomId updatedRoomBeforeFinalize model.rooms
+                                , activeSessionStats = Dict.insert roomId finalizedSession model.activeSessionStats
+                            }
+                    in
+                    ( newModel
+                    , Cmd.batch
+                        [ broadcastRoomUpdate updatedRoomBeforeFinalize newModel
+                        , broadcastStatsUpdate newModel
+                        ]
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+
 {-| Broadcast room update to all participants in the room
 -}
 broadcastRoomUpdate : Room -> Model -> Cmd BackendMsg
@@ -394,7 +472,7 @@ cleanupRoomIfEmpty roomId model =
                         |> Dict.size
             in
             if connectedCount == 0 then
-                ( { model | rooms = Dict.remove roomId model.rooms }, True )
+                ( archiveClosedSession roomId { model | rooms = Dict.remove roomId model.rooms }, True )
 
             else
                 ( model, False )
@@ -455,6 +533,172 @@ resetMissedPongs clientId room =
                 (Maybe.map (\p -> { p | missedPongs = 0 }))
                 room.participants
     }
+
+
+startActiveSession : RoomId -> Int -> Model -> Model
+startActiveSession roomId participantCount model =
+    { model
+        | activeSessionStats =
+            Dict.insert roomId
+                { startedDayKey = model.currentDayKey
+                , startedDayIndex = model.currentDayIndex
+                , participantCount = participantCount
+                , totalVotes = 0
+                , reachedReveal = False
+                , cardCounts = Dict.empty
+                , currentRoundVotes = Dict.empty
+                }
+                model.activeSessionStats
+    }
+
+
+incrementActiveSessionParticipants : RoomId -> Model -> Model
+incrementActiveSessionParticipants roomId model =
+    { model
+        | activeSessionStats =
+            Dict.update roomId
+                (Maybe.map (\sessionStats -> { sessionStats | participantCount = sessionStats.participantCount + 1 }))
+                model.activeSessionStats
+    }
+
+
+finalizeSessionRound : SessionStats -> SessionStats
+finalizeSessionRound sessionStats =
+    let
+        roundVoteCount =
+            Dict.size sessionStats.currentRoundVotes
+
+        updatedCardCounts =
+            Dict.foldl
+                (\_ vote acc -> Dict.update (voteKey vote) (incrementMaybe 1) acc)
+                sessionStats.cardCounts
+                sessionStats.currentRoundVotes
+    in
+    { sessionStats
+        | totalVotes = sessionStats.totalVotes + roundVoteCount
+        , reachedReveal = sessionStats.reachedReveal || roundVoteCount > 0
+        , cardCounts = updatedCardCounts
+        , currentRoundVotes = Dict.empty
+    }
+
+
+archiveClosedSession : RoomId -> Model -> Model
+archiveClosedSession roomId model =
+    case Dict.get roomId model.activeSessionStats of
+        Nothing ->
+            { model | activeSessionStats = Dict.remove roomId model.activeSessionStats }
+
+        Just sessionStats ->
+            let
+                archivedSession =
+                    if Dict.isEmpty sessionStats.currentRoundVotes then
+                        { sessionStats | currentRoundVotes = Dict.empty }
+
+                    else
+                        finalizeSessionRound sessionStats
+            in
+            { model
+                | activeSessionStats = Dict.remove roomId model.activeSessionStats
+                , completedSessionsByDay =
+                    Dict.update archivedSession.startedDayKey
+                        (\maybeSessions ->
+                            Just (archivedSession :: Maybe.withDefault [] maybeSessions)
+                        )
+                        model.completedSessionsByDay
+            }
+
+
+archiveClosedSessions : List RoomId -> Model -> Model
+archiveClosedSessions roomIds model =
+    List.foldl archiveClosedSession model roomIds
+
+
+updateCurrentDay : Time.Posix -> Model -> Model
+updateCurrentDay now model =
+    { model
+        | currentDayKey = dayKeyFromPosix now
+        , currentDayIndex = dayIndexFromPosix now
+    }
+
+
+dayIndexFromPosix : Time.Posix -> Int
+dayIndexFromPosix now =
+    Time.posixToMillis now // 86400000
+
+
+dayKeyFromPosix : Time.Posix -> String
+dayKeyFromPosix now =
+    String.fromInt (Time.toYear Time.utc now)
+        ++ "-"
+        ++ padDayComponent (monthToInt (Time.toMonth Time.utc now))
+        ++ "-"
+        ++ padDayComponent (Time.toDay Time.utc now)
+
+
+padDayComponent : Int -> String
+padDayComponent value =
+    String.fromInt value |> String.padLeft 2 '0'
+
+
+monthToInt : Time.Month -> Int
+monthToInt month =
+    case month of
+        Time.Jan ->
+            1
+
+        Time.Feb ->
+            2
+
+        Time.Mar ->
+            3
+
+        Time.Apr ->
+            4
+
+        Time.May ->
+            5
+
+        Time.Jun ->
+            6
+
+        Time.Jul ->
+            7
+
+        Time.Aug ->
+            8
+
+        Time.Sep ->
+            9
+
+        Time.Oct ->
+            10
+
+        Time.Nov ->
+            11
+
+        Time.Dec ->
+            12
+
+
+incrementMaybe : Int -> Maybe Int -> Maybe Int
+incrementMaybe amount maybeValue =
+    Just (Maybe.withDefault 0 maybeValue + amount)
+
+
+voteKey : Vote -> String
+voteKey vote =
+    case vote of
+        NumericVote n ->
+            String.fromInt n
+
+        HalfPoint ->
+            "half"
+
+        QuestionMark ->
+            "question"
+
+        CoffeeBreak ->
+            "coffee"
 
 
 handleHeartbeatResponse : Bool -> ClientId -> Model -> ( Model, Cmd BackendMsg )
@@ -523,9 +767,9 @@ processRoomPing :
     Model
     -> RoomId
     -> Room
-    -> ( Dict RoomId Room, List ( ClientId, String ), List (Cmd BackendMsg) )
-    -> ( Dict RoomId Room, List ( ClientId, String ), List (Cmd BackendMsg) )
-processRoomPing model roomId room ( accRooms, accTimedOut, accCmds ) =
+    -> PingProcessState
+    -> PingProcessState
+processRoomPing model roomId room state =
     let
         -- Increment missed pongs for all participants (connected or disconnected)
         -- Hidden tabs get a long grace period before they are removed.
@@ -583,10 +827,10 @@ processRoomPing model roomId room ( accRooms, accTimedOut, accCmds ) =
         -- If room is empty, don't add it back
         ( finalRooms, roomExists ) =
             if connectedCount == 0 && Dict.isEmpty updatedParticipants then
-                ( accRooms, False )
+                ( state.rooms, False )
 
             else
-                ( Dict.insert roomId updatedRoom accRooms, True )
+                ( Dict.insert roomId updatedRoom state.rooms, True )
 
         -- Notify remaining participants about timed out users
         notifyCmds =
@@ -617,10 +861,16 @@ processRoomPing model roomId room ( accRooms, accTimedOut, accCmds ) =
             else
                 []
     in
-    ( finalRooms
-    , accTimedOut ++ newTimedOut
-    , accCmds ++ notifyCmds ++ broadcastCmds
-    )
+    { rooms = finalRooms
+    , timedOutUsers = state.timedOutUsers ++ newTimedOut
+    , cmds = state.cmds ++ notifyCmds ++ broadcastCmds
+    , closedRoomIds =
+        if roomExists then
+            state.closedRoomIds
+
+        else
+            roomId :: state.closedRoomIds
+    }
 
 
 
@@ -629,45 +879,213 @@ processRoomPing model roomId room ( accRooms, accTimedOut, accCmds ) =
 -- =============================================================================
 
 
-buildStats : Model -> Stats
-buildStats model =
-    { totalRooms = Dict.size model.rooms
-    , totalConnectedClients = Dict.size model.clientToRoom
-    , rooms =
-        Dict.values model.rooms
-            |> List.map
-                (\room ->
-                    { name = room.name
-                    , participantCount = Dict.size room.participants
-                    , connectedCount =
-                        Dict.filter (\_ p -> p.isConnected) room.participants
-                            |> Dict.size
-                    , participants =
-                        Dict.values room.participants
-                            |> List.map
-                                (\p ->
-                                    { isConnected = p.isConnected
-                                    , missedPongs = p.missedPongs
-                                    , hasVoted = p.vote /= Nothing
-                                    , tabHidden = p.tabHidden
-                                    }
-                                )
-                    , votesRevealed = room.votesRevealed
-                    }
-                )
+buildStats : StatsFilters -> Model -> Stats
+buildStats filters model =
+    { filters = filters
+    , live = buildLiveStats model
+    , recent = buildHistoricalStats filters (Just filters.recentDays) model
+    , allTime = buildHistoricalStats filters Nothing model
     }
+
+
+buildLiveStats : Model -> LiveStats
+buildLiveStats model =
+    let
+        allParticipants =
+            model.rooms
+                |> Dict.values
+                |> List.concatMap (\room -> Dict.values room.participants)
+    in
+    { activeRooms = Dict.size model.rooms
+    , connectedUsers = Dict.size model.clientToRoom
+    , awayUsers =
+        allParticipants
+            |> List.filter (\participant -> participant.isConnected && participant.tabHidden)
+            |> List.length
+    , roomsVoting =
+        model.rooms
+            |> Dict.values
+            |> List.filter (\room -> not room.votesRevealed)
+            |> List.length
+    , roomsRevealed =
+        model.rooms
+            |> Dict.values
+            |> List.filter .votesRevealed
+            |> List.length
+    }
+
+
+buildHistoricalStats : StatsFilters -> Maybe Int -> Model -> HistoricalStats
+buildHistoricalStats filters maybeWindowDays model =
+    let
+        sessions =
+            model.completedSessionsByDay
+                |> Dict.values
+                |> List.concat
+                |> List.filter (sessionIsInWindow model.currentDayIndex maybeWindowDays)
+                |> List.filter (sessionPassesFilters filters)
+
+        sessionCount =
+            List.length sessions
+
+        completedSessionCount =
+            sessions
+                |> List.filter .reachedReveal
+                |> List.length
+
+        totalVotes =
+            sessions
+                |> List.map .totalVotes
+                |> List.sum
+
+        totalParticipants =
+            sessions
+                |> List.map .participantCount
+                |> List.sum
+
+        aggregatedCardCounts =
+            sessions
+                |> List.foldl
+                    (\sessionStats acc ->
+                        Dict.foldl
+                            (\voteName count innerAcc -> Dict.update voteName (incrementMaybe count) innerAcc)
+                            acc
+                            sessionStats.cardCounts
+                    )
+                    Dict.empty
+
+        totalCardVotes =
+            aggregatedCardCounts
+                |> Dict.values
+                |> List.sum
+    in
+    { windowDays = maybeWindowDays
+    , sessionCount = sessionCount
+    , completedSessionCount = completedSessionCount
+    , totalVotes = totalVotes
+    , averageParticipants =
+        if sessionCount == 0 then
+            0
+
+        else
+            toFloat totalParticipants / toFloat sessionCount
+    , averageVotes =
+        if sessionCount == 0 then
+            0
+
+        else
+            toFloat totalVotes / toFloat sessionCount
+    , revealRate =
+        if sessionCount == 0 then
+            0
+
+        else
+            (toFloat completedSessionCount / toFloat sessionCount) * 100
+    , cardPercentages =
+        voteDisplayOrder
+            |> List.filterMap
+                (\( voteName, label ) ->
+                    Dict.get voteName aggregatedCardCounts
+                        |> Maybe.map
+                            (\count ->
+                                { label = label
+                                , voteCount = count
+                                , percentage =
+                                    if totalCardVotes == 0 then
+                                        0
+
+                                    else
+                                        (toFloat count / toFloat totalCardVotes) * 100
+                                }
+                            )
+                )
+    , roomSizeBuckets = buildRoomSizeBuckets sessions
+    , sessionsByDay = buildDayCounts sessions
+    }
+
+
+sessionIsInWindow : Int -> Maybe Int -> SessionStats -> Bool
+sessionIsInWindow currentDayIndex maybeWindowDays sessionStats =
+    case maybeWindowDays of
+        Nothing ->
+            True
+
+        Just windowDays ->
+            let
+                daysAgo =
+                    currentDayIndex - sessionStats.startedDayIndex
+            in
+            daysAgo >= 0 && daysAgo < windowDays
+
+
+sessionPassesFilters : StatsFilters -> SessionStats -> Bool
+sessionPassesFilters filters sessionStats =
+    sessionStats.participantCount >= filters.minParticipants
+        && sessionStats.totalVotes >= filters.minVotes
+
+
+voteDisplayOrder : List ( String, String )
+voteDisplayOrder =
+    [ ( "0", "0" )
+    , ( "1", "1" )
+    , ( "half", "1/2" )
+    , ( "2", "2" )
+    , ( "3", "3" )
+    , ( "5", "5" )
+    , ( "8", "8" )
+    , ( "13", "13" )
+    , ( "21", "21" )
+    , ( "100", "100" )
+    , ( "question", "?" )
+    , ( "coffee", "Coffee" )
+    ]
+
+
+buildRoomSizeBuckets : List SessionStats -> List RoomSizeBucket
+buildRoomSizeBuckets sessions =
+    let
+        bucketCounts =
+            sessions
+                |> List.foldl
+                    (\sessionStats acc -> Dict.update (roomSizeBucketLabel sessionStats.participantCount) (incrementMaybe 1) acc)
+                    Dict.empty
+    in
+    [ "1", "2-3", "4-6", "7+" ]
+        |> List.map (\label -> { label = label, sessionCount = Maybe.withDefault 0 (Dict.get label bucketCounts) })
+
+
+roomSizeBucketLabel : Int -> String
+roomSizeBucketLabel participantCount =
+    if participantCount <= 1 then
+        "1"
+
+    else if participantCount <= 3 then
+        "2-3"
+
+    else if participantCount <= 6 then
+        "4-6"
+
+    else
+        "7+"
+
+
+buildDayCounts : List SessionStats -> List DayCount
+buildDayCounts sessions =
+    sessions
+        |> List.foldl
+            (\sessionStats acc -> Dict.update sessionStats.startedDayKey (incrementMaybe 1) acc)
+            Dict.empty
+        |> Dict.toList
+        |> List.sortBy Tuple.first
+        |> List.map (\( dayKey, sessionCount ) -> { dayKey = dayKey, sessionCount = sessionCount })
 
 
 broadcastStatsUpdate : Model -> Cmd BackendMsg
 broadcastStatsUpdate model =
-    if Set.isEmpty model.statsViewers then
+    if Dict.isEmpty model.statsViewers then
         Cmd.none
 
     else
-        let
-            stats =
-                buildStats model
-        in
-        Set.toList model.statsViewers
-            |> List.map (\cId -> sendToFrontend cId (StatsData stats))
+        Dict.toList model.statsViewers
+            |> List.map (\( cId, filters ) -> sendToFrontend cId (StatsData (buildStats filters model)))
             |> Cmd.batch

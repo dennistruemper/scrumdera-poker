@@ -542,6 +542,77 @@ a:hover {
   margin-bottom: 2rem;
 }
 
+.stats-section-title {
+  margin-bottom: 1rem;
+}
+
+.stats-filter-card {
+  margin-bottom: 2rem;
+}
+
+.stats-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.stats-slider-group {
+  grid-column: 1 / -1;
+}
+
+.stats-range-input {
+  width: 100%;
+}
+
+.stats-history-section {
+  margin-bottom: 2rem;
+}
+
+.stats-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.stats-bucket-card {
+  margin-bottom: 0;
+}
+
+.stats-bucket-card h3 {
+  margin-bottom: 0.75rem;
+  font-size: 1rem;
+}
+
+.stats-bucket-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.stats-bucket-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 0.875rem;
+}
+
+.stats-bucket-item:last-child {
+  border-bottom: none;
+}
+
+.stats-bucket-label {
+  color: #374151;
+}
+
+.stats-bucket-value {
+  color: #111827;
+  font-weight: 600;
+  text-align: right;
+}
+
 .stats-room {
   margin-bottom: 1.5rem;
 }
