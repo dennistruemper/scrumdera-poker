@@ -1,4 +1,12 @@
-port module Ports exposing (ClipboardResult, clipboardResult, copyToClipboard)
+port module Ports exposing
+    ( ClipboardResult
+    , clipboardResult
+    , copyToClipboard
+    , requestThemeState
+    , saveThemePreference
+    , systemThemeChanged
+    , themeState
+    )
 
 -- Outgoing port: send text to copy to clipboard
 
@@ -17,3 +25,18 @@ type alias ClipboardResult =
 
 
 port clipboardResult : (ClipboardResult -> msg) -> Sub msg
+
+
+-- Theme ports
+
+
+port requestThemeState : () -> Cmd msg
+
+
+port saveThemePreference : String -> Cmd msg
+
+
+port themeState : ({ preference : String, systemDark : Bool } -> msg) -> Sub msg
+
+
+port systemThemeChanged : (Bool -> msg) -> Sub msg

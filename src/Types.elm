@@ -65,6 +65,17 @@ type Page
     | StatsPage
 
 
+type ThemePreference
+    = UseSystemTheme
+    | UseLightTheme
+    | UseDarkTheme
+
+
+type Theme
+    = LightTheme
+    | DarkTheme
+
+
 type alias Stats =
     { filters : StatsFilters
     , live : LiveStats
@@ -141,6 +152,9 @@ type alias SessionStats =
 type alias FrontendModel =
     { key : Key
     , page : Page
+    , themePreference : ThemePreference
+    , systemTheme : Theme
+    , activeTheme : Theme
     , roomData : Maybe Room
     , userName : String
     , newRoomName : String
@@ -181,6 +195,9 @@ type alias BackendModel =
 type FrontendMsg
     = UrlClicked UrlRequest
     | UrlChanged Url
+    | SetThemePreference ThemePreference
+    | ThemeStateReceived String Bool
+    | SystemThemeChanged Bool
     | SetUserName String
     | SetNewRoomName String
     | SetJoinRoomId String

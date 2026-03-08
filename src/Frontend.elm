@@ -45,6 +45,8 @@ subscriptions : Model -> Sub FrontendMsg
 subscriptions _ =
     Sub.batch
         [ Ports.clipboardResult ClipboardResult
+        , Ports.themeState (\state -> ThemeStateReceived state.preference state.systemDark)
+        , Ports.systemThemeChanged SystemThemeChanged
         , Browser.Events.onVisibilityChange
             (\visibility ->
                 case visibility of
@@ -98,6 +100,9 @@ init url key =
     in
     ( { key = key
       , page = page
+      , themePreference = UseSystemTheme
+      , systemTheme = LightTheme
+      , activeTheme = LightTheme
       , roomData = Nothing
       , userName = ""
       , newRoomName = ""
@@ -112,12 +117,15 @@ init url key =
       , stats = Nothing
       , statsFilters = statsFilters
       }
-    , case page of
-        StatsPage ->
-            Lamdera.sendToBackend (SubscribeToStats statsFilters)
+    , Cmd.batch
+        [ Ports.requestThemeState ()
+        , case page of
+            StatsPage ->
+                Lamdera.sendToBackend (SubscribeToStats statsFilters)
 
-        _ ->
-            Cmd.none
+            _ ->
+                Cmd.none
+        ]
     )
 
 
@@ -182,6 +190,46 @@ update msg model =
             in
             ( { model | page = newPage, error = Nothing }
             , Cmd.batch [ unsubscribeCmd, subscribeCmd ]
+            )
+
+        SetThemePreference preference ->
+            let
+                activeTheme =
+                    resolveTheme preference model.systemTheme
+            in
+            ( { model
+                | themePreference = preference
+                , activeTheme = activeTheme
+              }
+            , Ports.saveThemePreference (themePreferenceToString preference)
+            )
+
+        ThemeStateReceived preferenceString systemDark ->
+            let
+                preference =
+                    themePreferenceFromString preferenceString
+
+                systemTheme =
+                    themeFromBool systemDark
+            in
+            ( { model
+                | themePreference = preference
+                , systemTheme = systemTheme
+                , activeTheme = resolveTheme preference systemTheme
+              }
+            , Cmd.none
+            )
+
+        SystemThemeChanged systemDark ->
+            let
+                systemTheme =
+                    themeFromBool systemDark
+            in
+            ( { model
+                | systemTheme = systemTheme
+                , activeTheme = resolveTheme model.themePreference systemTheme
+              }
+            , Cmd.none
             )
 
         SetUserName name ->
@@ -414,17 +462,110 @@ view model =
     { title = "Scrumdera Poker"
     , body =
         [ node "link" [ Attr.rel "stylesheet", Attr.href "/styles.css" ] []
-        , case model.page of
-            HomePage ->
-                viewHomePage model
+        , div
+            [ Attr.class "app-shell"
+            , Attr.attribute "data-theme" (themeToString model.activeTheme)
+            ]
+            [ viewThemeBar model
+            , case model.page of
+                HomePage ->
+                    viewHomePage model
 
-            RoomPage roomId maybePin ->
-                viewRoomPage model roomId maybePin
+                RoomPage roomId maybePin ->
+                    viewRoomPage model roomId maybePin
 
-            StatsPage ->
-                viewStatsPage model
+                StatsPage ->
+                    viewStatsPage model
+            ]
         ]
     }
+
+
+themeFromBool : Bool -> Theme
+themeFromBool isDark =
+    if isDark then
+        DarkTheme
+
+    else
+        LightTheme
+
+
+resolveTheme : ThemePreference -> Theme -> Theme
+resolveTheme preference systemTheme =
+    case preference of
+        UseSystemTheme ->
+            systemTheme
+
+        UseLightTheme ->
+            LightTheme
+
+        UseDarkTheme ->
+            DarkTheme
+
+
+themeToString : Theme -> String
+themeToString theme =
+    case theme of
+        LightTheme ->
+            "light"
+
+        DarkTheme ->
+            "dark"
+
+
+themePreferenceToString : ThemePreference -> String
+themePreferenceToString preference =
+    case preference of
+        UseSystemTheme ->
+            "system"
+
+        UseLightTheme ->
+            "light"
+
+        UseDarkTheme ->
+            "dark"
+
+
+themePreferenceFromString : String -> ThemePreference
+themePreferenceFromString preference =
+    case preference of
+        "light" ->
+            UseLightTheme
+
+        "dark" ->
+            UseDarkTheme
+
+        _ ->
+            UseSystemTheme
+
+
+viewThemeBar : Model -> Html FrontendMsg
+viewThemeBar model =
+    div [ Attr.class "theme-bar" ]
+        [ div [ Attr.class "theme-toggle", Attr.attribute "role" "group", Attr.attribute "aria-label" "Theme selection" ]
+            [ viewThemeOption model.themePreference UseSystemTheme "System"
+            , viewThemeOption model.themePreference UseLightTheme "Light"
+            , viewThemeOption model.themePreference UseDarkTheme "Dark"
+            ]
+        ]
+
+
+viewThemeOption : ThemePreference -> ThemePreference -> String -> Html FrontendMsg
+viewThemeOption currentPreference optionPreference label =
+    let
+        className =
+            if currentPreference == optionPreference then
+                "theme-option is-selected"
+
+            else
+                "theme-option"
+    in
+    button
+        [ Attr.type_ "button"
+        , Attr.class className
+        , onClick (SetThemePreference optionPreference)
+        ]
+        [ text label ]
 
 
 viewHomePage : Model -> Html FrontendMsg
