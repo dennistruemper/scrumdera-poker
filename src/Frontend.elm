@@ -542,7 +542,14 @@ themePreferenceFromString preference =
 viewThemeBar : Model -> Html FrontendMsg
 viewThemeBar model =
     div [ Attr.class "theme-bar" ]
-        [ div [ Attr.class "theme-toggle", Attr.attribute "role" "group", Attr.attribute "aria-label" "Theme selection" ]
+        [ a
+            [ Attr.class "theme-link"
+            , Attr.href "https://github.com/dennistruemper/scrumdera-poker"
+            , Attr.target "_blank"
+            , Attr.rel "noopener noreferrer"
+            ]
+            [ text "View source" ]
+        , div [ Attr.class "theme-toggle", Attr.attribute "role" "group", Attr.attribute "aria-label" "Theme selection" ]
             [ viewThemeOption model.themePreference UseSystemTheme "System"
             , viewThemeOption model.themePreference UseLightTheme "Light"
             , viewThemeOption model.themePreference UseDarkTheme "Dark"
