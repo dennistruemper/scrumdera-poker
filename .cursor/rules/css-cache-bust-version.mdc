@@ -1,0 +1,27 @@
+---
+description: Bump stylesheet cache-bust when editing public/styles.css
+globs: public/styles.css
+alwaysApply: false
+---
+
+# CSS Cache-Bust Version
+
+When editing `public/styles.css`, also update the stylesheet cache-bust query string in `src/Frontend.elm`.
+
+Current pattern:
+
+```elm
+node "link" [ Attr.rel "stylesheet", Attr.href "/styles.css?v=1" ] []
+```
+
+If `public/styles.css` changes, increment the `v=` value so browsers fetch the new stylesheet after deploy.
+
+Examples:
+
+```elm
+-- Before
+Attr.href "/styles.css?v=1"
+
+-- After a CSS change
+Attr.href "/styles.css?v=2"
+```

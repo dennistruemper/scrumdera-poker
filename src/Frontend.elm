@@ -461,7 +461,7 @@ view : Model -> Browser.Document FrontendMsg
 view model =
     { title = "Scrumdera Poker"
     , body =
-        [ node "link" [ Attr.rel "stylesheet", Attr.href "/styles.css" ] []
+        [ node "link" [ Attr.rel "stylesheet", Attr.href "/styles.css?v=1" ] []
         , div
             [ Attr.class "app-shell"
             , Attr.attribute "data-theme" (themeToString model.activeTheme)
