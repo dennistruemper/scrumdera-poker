@@ -2,8 +2,12 @@ port module Ports exposing
     ( ClipboardResult
     , clipboardResult
     , copyToClipboard
+    , forgetPlayerName
+    , rememberPlayerName
+    , requestSavedNames
     , requestThemeState
     , saveThemePreference
+    , savedNamesReceived
     , systemThemeChanged
     , themeState
     )
@@ -40,3 +44,18 @@ port themeState : ({ preference : String, systemDark : Bool } -> msg) -> Sub msg
 
 
 port systemThemeChanged : (Bool -> msg) -> Sub msg
+
+
+-- Saved player names (IndexedDB)
+
+
+port requestSavedNames : () -> Cmd msg
+
+
+port rememberPlayerName : String -> Cmd msg
+
+
+port forgetPlayerName : String -> Cmd msg
+
+
+port savedNamesReceived : (List { name : String, lastUsed : Int } -> msg) -> Sub msg

@@ -144,6 +144,12 @@ type alias SessionStats =
     }
 
 
+type alias SavedPlayerName =
+    { name : String
+    , lastUsed : Int
+    }
+
+
 -- =============================================================================
 -- Frontend Model
 -- =============================================================================
@@ -157,6 +163,8 @@ type alias FrontendModel =
     , activeTheme : Theme
     , roomData : Maybe Room
     , userName : String
+    , savedPlayerNames : List SavedPlayerName
+    , playerNameInputExpanded : Bool
     , newRoomName : String
     , joinRoomId : String
     , joinRoomPin : String
@@ -199,6 +207,10 @@ type FrontendMsg
     | ThemeStateReceived String Bool
     | SystemThemeChanged Bool
     | SetUserName String
+    | SavedNamesReceived (List SavedPlayerName)
+    | ExpandPlayerNameInput
+    | ForgetSavedPlayerName String
+    | PlayerNameSelectChanged String
     | SetNewRoomName String
     | SetJoinRoomId String
     | SetJoinRoomPin String

@@ -6,7 +6,8 @@ import Browser.Navigation as Nav
 import Dict
 import Html exposing (..)
 import Html.Attributes as Attr
-import Html.Events exposing (onClick, onInput)
+import Html.Events exposing (on, onClick, onInput, targetValue)
+import Json.Decode as Decode
 import Lamdera
 import Ports
 import Process
@@ -29,6 +30,11 @@ defaultStatsFilters =
     }
 
 
+playerNameNewOptionValue : String
+playerNameNewOptionValue =
+    "__new__"
+
+
 app =
     Lamdera.frontend
         { init = init
@@ -45,6 +51,7 @@ subscriptions : Model -> Sub FrontendMsg
 subscriptions _ =
     Sub.batch
         [ Ports.clipboardResult ClipboardResult
+        , Ports.savedNamesReceived SavedNamesReceived
         , Ports.themeState (\state -> ThemeStateReceived state.preference state.systemDark)
         , Ports.systemThemeChanged SystemThemeChanged
         , Browser.Events.onVisibilityChange
@@ -105,6 +112,8 @@ init url key =
       , activeTheme = LightTheme
       , roomData = Nothing
       , userName = ""
+      , savedPlayerNames = []
+      , playerNameInputExpanded = True
       , newRoomName = ""
       , joinRoomId = joinRoomId
       , joinRoomPin = joinRoomPin
@@ -119,6 +128,7 @@ init url key =
       }
     , Cmd.batch
         [ Ports.requestThemeState ()
+        , Ports.requestSavedNames ()
         , case page of
             StatsPage ->
                 Lamdera.sendToBackend (SubscribeToStats statsFilters)
@@ -127,6 +137,68 @@ init url key =
                 Cmd.none
         ]
     )
+
+
+
+-- =============================================================================
+-- Saved player names (IndexedDB)
+-- =============================================================================
+
+
+userNameWhenExpandingNameChoice : List SavedPlayerName -> String
+userNameWhenExpandingNameChoice saved =
+    case saved of
+        [] ->
+            ""
+
+        [ _ ] ->
+            ""
+
+        _ :: secondMostRecent :: _ ->
+            secondMostRecent.name
+
+
+applySavedPlayerNamesFromIdb : Model -> List SavedPlayerName -> Model
+applySavedPlayerNamesFromIdb model names =
+    let
+        empty =
+            List.isEmpty names
+
+        firstName =
+            List.head names
+                |> Maybe.map .name
+                |> Maybe.withDefault ""
+
+        isFirstLoad =
+            List.isEmpty model.savedPlayerNames
+
+        trimmed =
+            String.trim model.userName
+
+        useCompactDefault =
+            not model.playerNameInputExpanded
+                || (isFirstLoad && trimmed == "")
+    in
+    if empty then
+        { model
+            | savedPlayerNames = []
+            , userName = ""
+            , playerNameInputExpanded = True
+        }
+
+    else if useCompactDefault then
+        { model
+            | savedPlayerNames = names
+            , userName = firstName
+            , playerNameInputExpanded = False
+        }
+
+    else
+        -- Expanded: keep userName (e.g. "" after "Use a different name"). Do not snap back to firstName on
+        -- async SavedNamesReceived — that caused the select to stay on the old name until the next event.
+        { model
+            | savedPlayerNames = names
+        }
 
 
 
@@ -235,6 +307,35 @@ update msg model =
         SetUserName name ->
             ( { model | userName = name }, Cmd.none )
 
+        SavedNamesReceived names ->
+            ( applySavedPlayerNamesFromIdb model names, Cmd.none )
+
+        ExpandPlayerNameInput ->
+            ( { model
+                | playerNameInputExpanded = True
+                , userName = userNameWhenExpandingNameChoice model.savedPlayerNames
+              }
+            , Cmd.none
+            )
+
+        ForgetSavedPlayerName rawName ->
+            let
+                name =
+                    String.trim rawName
+            in
+            if String.isEmpty name then
+                ( model, Cmd.none )
+
+            else
+                ( model, Ports.forgetPlayerName name )
+
+        PlayerNameSelectChanged choice ->
+            if choice == playerNameNewOptionValue then
+                ( { model | userName = "" }, Cmd.none )
+
+            else
+                ( { model | userName = choice }, Cmd.none )
+
         SetNewRoomName name ->
             ( { model | newRoomName = name }, Cmd.none )
 
@@ -245,7 +346,11 @@ update msg model =
             ( { model | joinRoomPin = pin }, Cmd.none )
 
         CreateRoomClicked ->
-            if String.isEmpty model.userName then
+            let
+                trimmedName =
+                    String.trim model.userName
+            in
+            if String.isEmpty trimmedName then
                 ( { model | error = Just "Please enter your name" }, Cmd.none )
 
             else if String.isEmpty model.newRoomName then
@@ -253,11 +358,15 @@ update msg model =
 
             else
                 ( { model | error = Nothing }
-                , Lamdera.sendToBackend (CreateRoom model.newRoomName model.userName)
+                , Lamdera.sendToBackend (CreateRoom model.newRoomName trimmedName)
                 )
 
         JoinRoomClicked ->
-            if String.isEmpty model.userName then
+            let
+                trimmedName =
+                    String.trim model.userName
+            in
+            if String.isEmpty trimmedName then
                 ( { model | error = Just "Please enter your name" }, Cmd.none )
 
             else if String.isEmpty model.joinRoomId then
@@ -268,7 +377,7 @@ update msg model =
 
             else
                 ( { model | error = Nothing }
-                , Lamdera.sendToBackend (JoinRoom model.joinRoomId model.joinRoomPin model.userName)
+                , Lamdera.sendToBackend (JoinRoom model.joinRoomId model.joinRoomPin trimmedName)
                 )
 
         CastVote vote ->
@@ -389,21 +498,46 @@ updateFromBackend : ToFrontend -> Model -> ( Model, Cmd FrontendMsg )
 updateFromBackend msg model =
     case msg of
         RoomCreated room clientId ->
+            let
+                trimmedName =
+                    String.trim model.userName
+
+                rememberCmd =
+                    if String.isEmpty trimmedName then
+                        Cmd.none
+
+                    else
+                        Ports.rememberPlayerName trimmedName
+            in
             ( { model
                 | roomData = Just room
                 , myClientId = Just clientId
                 , page = RoomPage room.id (Just room.pin)
               }
-            , Nav.pushUrl model.key ("/room/" ++ room.id ++ "?pin=" ++ room.pin)
+            , Cmd.batch
+                [ Nav.pushUrl model.key ("/room/" ++ room.id ++ "?pin=" ++ room.pin)
+                , rememberCmd
+                ]
             )
 
         RoomJoined room clientId ->
+            let
+                trimmedName =
+                    String.trim model.userName
+
+                rememberCmd =
+                    if String.isEmpty trimmedName then
+                        Cmd.none
+
+                    else
+                        Ports.rememberPlayerName trimmedName
+            in
             ( { model
                 | roomData = Just room
                 , myClientId = Just clientId
                 , page = RoomPage room.id (Just room.pin)
               }
-            , Cmd.none
+            , rememberCmd
             )
 
         RoomUpdated room ->
@@ -461,7 +595,7 @@ view : Model -> Browser.Document FrontendMsg
 view model =
     { title = "Scrumdera Poker"
     , body =
-        [ node "link" [ Attr.rel "stylesheet", Attr.href "/styles.css?v=1" ] []
+        [ node "link" [ Attr.rel "stylesheet", Attr.href "/styles.css?v=6" ] []
         , div
             [ Attr.class "app-shell"
             , Attr.attribute "data-theme" (themeToString model.activeTheme)
@@ -575,6 +709,202 @@ viewThemeOption currentPreference optionPreference label =
         [ text label ]
 
 
+viewPlayerNameSection : Model -> String -> Html FrontendMsg
+viewPlayerNameSection model selectId =
+    let
+        hasSaved =
+            not (List.isEmpty model.savedPlayerNames)
+
+        showCompact =
+            hasSaved && not model.playerNameInputExpanded
+    in
+    div [ Attr.class "form-group mb-6" ]
+        [ label
+            (Attr.class "form-label"
+                :: (if showCompact then
+                        []
+
+                    else
+                        [ Attr.for selectId ]
+                   )
+            )
+            [ text "Your Name" ]
+        , if showCompact then
+            viewPlayerNameCompact model
+
+          else
+            viewPlayerNameExpanded model selectId
+        ]
+
+
+viewPlayerNameCompact : Model -> Html FrontendMsg
+viewPlayerNameCompact model =
+    div [ Attr.class "player-name-compact" ]
+        [ p [ Attr.class "player-name-compact-summary" ]
+            [ text "Playing as "
+            , strong [] [ text model.userName ]
+            ]
+        , div [ Attr.class "player-name-compact-actions" ]
+            [ button
+                [ Attr.type_ "button"
+                , Attr.class "btn btn-secondary btn-small"
+                , onClick ExpandPlayerNameInput
+                ]
+                [ text "Use a different name" ]
+            , button
+                [ Attr.type_ "button"
+                , Attr.class "saved-names-remove"
+                , onClick (ForgetSavedPlayerName model.userName)
+                ]
+                [ text "Forget this name" ]
+            ]
+        ]
+
+
+viewPlayerNameExpanded : Model -> String -> Html FrontendMsg
+viewPlayerNameExpanded model selectId =
+    let
+        choiceValue =
+            playerNameChoiceValue model
+
+        showNewNameField =
+            choiceValue == playerNameNewOptionValue
+    in
+    div [ Attr.class "player-name-expanded" ]
+        (if List.isEmpty model.savedPlayerNames then
+            [ input
+                [ Attr.type_ "text"
+                , Attr.class "form-input"
+                , Attr.id selectId
+                , Attr.placeholder "Enter your name"
+                , Attr.value model.userName
+                , onInput SetUserName
+                ]
+                []
+            ]
+
+         else
+            [ select
+                [ Attr.id selectId
+                , Attr.class "form-input form-select"
+                , onPlayerNameSelectChange model.savedPlayerNames
+                ]
+                (List.indexedMap
+                    (\i n ->
+                        option
+                            [ Attr.value (String.fromInt i)
+                            , Attr.selected (playerNameSavedSelectIndex model == Just i)
+                            ]
+                            [ text n.name ]
+                    )
+                    model.savedPlayerNames
+                    ++ [ option
+                            [ Attr.value (String.fromInt (List.length model.savedPlayerNames))
+                            , Attr.selected (playerNameSavedSelectIndex model == Nothing)
+                            ]
+                            [ text "Enter a new name…" ]
+                       ]
+                )
+            , if showNewNameField then
+                input
+                    [ Attr.type_ "text"
+                    , Attr.class "form-input mt-2"
+                    , Attr.id (selectId ++ "-new")
+                    , Attr.placeholder "New name"
+                    , Attr.value model.userName
+                    , Attr.attribute "aria-label" "New name"
+                    , onInput SetUserName
+                    ]
+                    []
+
+              else
+                text ""
+            , viewManageSavedNames model
+            ]
+        )
+
+
+playerNameSavedSelectIndex : Model -> Maybe Int
+playerNameSavedSelectIndex model =
+    let
+        trimmed =
+            String.trim model.userName
+    in
+    model.savedPlayerNames
+        |> List.indexedMap (\i n -> ( i, n.name ))
+        |> List.filter (\( _, name ) -> name == trimmed)
+        |> List.head
+        |> Maybe.map Tuple.first
+
+
+onPlayerNameSelectChange : List SavedPlayerName -> Attribute FrontendMsg
+onPlayerNameSelectChange savedNames =
+    let
+        newIndex =
+            List.length savedNames
+    in
+    on "change" <|
+        Decode.andThen
+            (\idxStr ->
+                case String.toInt idxStr of
+                    Nothing ->
+                        Decode.fail "player name select: invalid index"
+
+                    Just idx ->
+                        if idx == newIndex then
+                            Decode.succeed (PlayerNameSelectChanged playerNameNewOptionValue)
+
+                        else
+                            case List.head (List.drop idx savedNames) of
+                                Just n ->
+                                    Decode.succeed (PlayerNameSelectChanged n.name)
+
+                                Nothing ->
+                                    Decode.fail "player name select: index out of range"
+            )
+            targetValue
+
+
+playerNameChoiceValue : Model -> String
+playerNameChoiceValue model =
+    let
+        trimmed =
+            String.trim model.userName
+    in
+    if List.any (\n -> n.name == trimmed) model.savedPlayerNames then
+        trimmed
+
+    else
+        playerNameNewOptionValue
+
+
+viewManageSavedNames : Model -> Html FrontendMsg
+viewManageSavedNames model =
+    node "details"
+        [ Attr.class "saved-names-manage" ]
+        [ node "summary"
+            [ Attr.class "saved-names-manage-summary" ]
+            [ text "Manage saved names…" ]
+        , div [ Attr.class "saved-names-manage-body" ]
+            [ ul [ Attr.class "saved-names-list-items" ]
+                (List.map
+                    (\n ->
+                        li [ Attr.class "saved-names-list-item" ]
+                            [ span [] [ text n.name ]
+                            , button
+                                [ Attr.type_ "button"
+                                , Attr.class "saved-names-remove"
+                                , onClick (ForgetSavedPlayerName n.name)
+                                ]
+                                [ text "Remove" ]
+                            ]
+                    )
+                    model.savedPlayerNames
+                )
+            ]
+        ]
+
+
 viewHomePage : Model -> Html FrontendMsg
 viewHomePage model =
     div [ Attr.class "container-narrow" ]
@@ -585,18 +915,8 @@ viewHomePage model =
         -- Error display
         , viewError model.error
 
-        -- Username input
-        , div [ Attr.class "form-group mb-6" ]
-            [ label [ Attr.class "form-label" ] [ text "Your Name" ]
-            , input
-                [ Attr.type_ "text"
-                , Attr.class "form-input"
-                , Attr.placeholder "Enter your name"
-                , Attr.value model.userName
-                , onInput SetUserName
-                ]
-                []
-            ]
+        -- Username (saved names + optional input)
+        , viewPlayerNameSection model "saved-player-names-home"
 
         -- Create room section
         , div [ Attr.class "card" ]
@@ -669,16 +989,7 @@ viewRoomPage model roomId maybePin =
                     Just _ ->
                         -- Show join form
                         div [ Attr.class "mt-4" ]
-                            [ div [ Attr.class "form-group" ]
-                                [ input
-                                    [ Attr.type_ "text"
-                                    , Attr.class "form-input"
-                                    , Attr.placeholder "Your name"
-                                    , Attr.value model.userName
-                                    , onInput SetUserName
-                                    ]
-                                    []
-                                ]
+                            [ viewPlayerNameSection model "saved-player-names-room"
                             , button
                                 [ Attr.class "btn btn-primary"
                                 , onClick JoinRoomClicked

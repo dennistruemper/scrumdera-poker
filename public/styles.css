@@ -892,6 +892,84 @@ a:hover {
   color: #22c55e;
 }
 
+/* Saved player names (home / join) */
+.player-name-compact-summary {
+  margin-bottom: 0.75rem;
+}
+
+.player-name-compact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.form-select {
+  cursor: pointer;
+  appearance: auto;
+  background-color: var(--bg-surface);
+}
+
+.saved-names-manage {
+  margin-top: 1rem;
+}
+
+.saved-names-manage-summary {
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--link);
+  list-style: none;
+}
+
+.saved-names-manage-summary::-webkit-details-marker {
+  display: none;
+}
+
+.saved-names-manage-summary::before {
+  content: "▸ ";
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+details.saved-names-manage[open] .saved-names-manage-summary::before {
+  transform: rotate(90deg);
+}
+
+.saved-names-manage-body {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-soft);
+}
+
+.saved-names-list-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.saved-names-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.saved-names-remove {
+  font-size: 0.875rem;
+  padding: 0.25rem 0.5rem;
+  border: none;
+  background: transparent;
+  color: var(--alert-error-text);
+  cursor: pointer;
+  border-radius: 4px;
+  font-family: inherit;
+}
+
+.saved-names-remove:hover {
+  background: var(--alert-error-bg);
+}
+
 @media (max-width: 640px) {
   .theme-bar {
     padding-bottom: 0.5rem;
